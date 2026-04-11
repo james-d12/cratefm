@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use cratefm_core::{
     db::Db,
     discogs::fetch_releases,
-    models::{FetchParams, Release, ReleaseRow, ReleaseStatus, VideoRow},
+    models::{FetchParams, ListenVideo, ReleaseRow, ReleaseStatus, VideoRow},
 };
 use iced::{
     widget::{
@@ -98,9 +98,9 @@ struct App {
     // Listen session
     listen_batch: String,
     listen_phase: ListenPhase,
-    listen_queue: Vec<Release>,   // upcoming, not including current
-    listen_total: usize,          // size of original batch
-    listen_current: Option<Release>,
+    listen_queue: Vec<ListenVideo>, // upcoming, not including current
+    listen_total: usize,            // size of original batch
+    listen_current: Option<ListenVideo>,
     listen_filepath: Option<PathBuf>,
     listen_stats: ListenStats,
     listen_error: Option<String>,
@@ -145,7 +145,7 @@ enum Message {
     // Listen session
     ListenBatchInput(String),
     ListenStart,
-    ListenBatchLoaded(Result<Vec<Release>, String>),
+    ListenBatchLoaded(Result<Vec<ListenVideo>, String>),
     ListenDownloadDone(Result<PathBuf, String>),
     ListenPlaybackDone(u64), // carries generation id
     ListenRate(RateAction),
@@ -280,7 +280,7 @@ impl App {
                 Task::perform(
                     async move {
                         let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-                        db.next_listen_batch(batch).map_err(|e| e.to_string())
+                        db.next_listen_videos(batch).map_err(|e| e.to_string())
                     },
                     Message::ListenBatchLoaded,
                 )
@@ -292,14 +292,14 @@ impl App {
                     self.listen_error = Some(e);
                     Task::none()
                 }
-                Ok(releases) if releases.is_empty() => {
+                Ok(videos) if videos.is_empty() => {
                     self.listen_phase = ListenPhase::Done;
                     Task::none()
                 }
-                Ok(mut releases) => {
-                    self.listen_total = releases.len();
-                    let current = releases.remove(0);
-                    self.listen_queue = releases;
+                Ok(mut videos) => {
+                    self.listen_total = videos.len();
+                    let current = videos.remove(0);
+                    self.listen_queue = videos;
                     self.start_download(current)
                 }
             },
@@ -329,7 +329,7 @@ impl App {
             }
 
             Message::ListenRate(action) => {
-                let release_id = self.listen_current.as_ref().map(|r| r.id);
+                let video_id = self.listen_current.as_ref().map(|v| v.video_id);
 
                 // Clean up the downloaded file
                 if let Some(path) = self.listen_filepath.take() {
@@ -346,16 +346,16 @@ impl App {
                     }
                     RateAction::Like => {
                         self.listen_stats.liked += 1;
-                        if let Some(id) = release_id {
+                        if let Some(id) = video_id {
                             let _ = Db::open(DB_PATH)
-                                .and_then(|db| db.mark_release(id, &ReleaseStatus::Liked));
+                                .and_then(|db| db.mark_video(id, &ReleaseStatus::Liked));
                         }
                     }
                     RateAction::Dislike => {
                         self.listen_stats.disliked += 1;
-                        if let Some(id) = release_id {
+                        if let Some(id) = video_id {
                             let _ = Db::open(DB_PATH)
-                                .and_then(|db| db.mark_release(id, &ReleaseStatus::Disliked));
+                                .and_then(|db| db.mark_video(id, &ReleaseStatus::Disliked));
                         }
                     }
                 }
@@ -365,18 +365,13 @@ impl App {
         }
     }
 
-    /// Pull the next release from the queue and start downloading it,
+    /// Pull the next video from the queue and start downloading it,
     /// or end the session if the queue is empty.
-    fn start_download(&mut self, release: Release) -> Task<Message> {
+    fn start_download(&mut self, video: ListenVideo) -> Task<Message> {
         self.listen_gen += 1;
-        self.listen_current = Some(release.clone());
+        self.listen_current = Some(video.clone());
         self.listen_phase = ListenPhase::Downloading;
-        let play_gen = self.listen_gen;
-        Task::perform(download_release(release), move |r| {
-            // Wrap in the generation-aware message path
-            let _ = play_gen; // suppress unused warning
-            Message::ListenDownloadDone(r)
-        })
+        Task::perform(download_video(video), Message::ListenDownloadDone)
     }
 
     fn advance_listen(&mut self) -> Task<Message> {
@@ -497,7 +492,8 @@ impl App {
 
             let header = table_row(vec![
                 (50, "ID"), (160, "Artist"), (200, "Title"), (55, "Year"),
-                (120, "Genre"), (120, "Style"), (65, "Rating"), (70, "Owners"), (60, "Videos"),
+                (120, "Genre"), (120, "Style"), (65, "Rating"), (70, "Owners"),
+                (65, "To Listen"), (55, "Liked"), (65, "Disliked"),
             ]);
 
             let rows: Vec<Element<Message>> = visible
@@ -513,7 +509,9 @@ impl App {
                         (120, r.style.clone()),
                         (65, format!("{:.2}", r.rating)),
                         (70, r.owners.to_string()),
-                        (60, rr.video_count.to_string()),
+                        (65, rr.to_listen_count.to_string()),
+                        (55, rr.liked_count.to_string()),
+                        (65, rr.disliked_count.to_string()),
                     ])
                 })
                 .collect();
@@ -571,7 +569,7 @@ impl App {
                 .collect();
 
             let header = table_row(vec![
-                (50, "ID"), (150, "Artist"), (180, "Release"), (200, "Video title"), (300, "URL"),
+                (50, "ID"), (80, "Status"), (150, "Artist"), (180, "Release"), (200, "Video title"), (300, "URL"),
             ]);
 
             let rows: Vec<Element<Message>> = visible
@@ -579,6 +577,7 @@ impl App {
                 .map(|vr| {
                     table_row(vec![
                         (50, vr.video.id.to_string()),
+                        (80, vr.video.status.to_string()),
                         (150, vr.release_artist.clone()),
                         (180, vr.release_title.clone()),
                         (200, vr.video.title.clone()),
@@ -670,27 +669,25 @@ impl App {
     }
 
     fn view_listen_session(&self) -> Element<'_, Message> {
-        let release = match &self.listen_current {
-            Some(r) => r,
+        let video = match &self.listen_current {
+            Some(v) => v,
             None => return container(text("")).padding(24).into(),
         };
 
         let position = self.listen_total - self.listen_queue.len();
-        let progress = text(format!(
-            "Track {position} / {}",
-            self.listen_total
-        ));
+        let progress = text(format!("Track {position} / {}", self.listen_total));
 
-        // Release card
-        let year_str = release.year.map(|y| format!(" ({y})")).unwrap_or_default();
+        // Release + video card
+        let year_str = video.release_year.map(|y| format!(" ({y})")).unwrap_or_default();
         let card = column![
-            text(format!("{}{}", release.title, year_str)).size(22),
-            text(format!("by {}", release.artist)).size(16),
+            text(format!("{}{}", video.release_title, year_str)).size(22),
+            text(format!("by {}", video.release_artist)).size(16),
             text(format!(
                 "{}  ·  {}  ·  Rating: {:.2}  ·  Owners: {}",
-                release.genre, release.style, release.rating, release.owners
+                video.release_genre, video.release_style, video.release_rating, video.release_owners
             ))
             .size(13),
+            text(format!("Video: {}", video.video_title)).size(13),
         ]
         .spacing(4);
 
@@ -772,14 +769,9 @@ async fn do_fetch(params: FetchParams) -> Result<(usize, usize), String> {
     Ok((releases.len(), videos.len()))
 }
 
-/// Download the first video for a release using yt-dlp and return the file path.
-async fn download_release(release: Release) -> Result<PathBuf, String> {
-    let video_url = {
-        let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-        db.first_video_url(release.id)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("No video for release {}", release.id))?
-    };
+/// Download a video using yt-dlp and return the file path.
+async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
+    let video_url = video.video_url;
 
     let tmp_dir =
         std::env::temp_dir().join(format!("cratefm-{}", std::process::id()));
@@ -850,7 +842,7 @@ fn load_releases(status: ReleaseStatus) -> Task<Message> {
     Task::perform(
         async move {
             let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-            db.list_releases(&status).map_err(|e| e.to_string())
+            db.list_releases(Some(&status)).map_err(|e| e.to_string())
         },
         Message::RelLoaded,
     )

@@ -3,10 +3,9 @@ use clap::{Parser, Subcommand};
 use cratefm_core::{
     db::Db,
     discogs::fetch_releases,
-    models::{FetchParams, Release, ReleaseStatus},
+    models::{FetchParams, ListenVideo, ReleaseStatus},
 };
 use std::io::{self, Write as IoWrite};
-use std::path::{Path, PathBuf};
 
 const DB_PATH: &str = "discogs.db";
 
@@ -38,24 +37,22 @@ enum Command {
         #[arg(long)]
         min_rating: Option<f64>,
     },
-    /// List releases by status
+    /// List releases, optionally filtered to those with videos of a given status
     List {
-        #[arg(value_parser = ["to_listen", "liked", "disliked"])]
+        /// Filter: to_listen | liked | disliked | all (default: to_listen)
+        #[arg(default_value = "to_listen")]
         status: String,
     },
-    /// Manually update a release status
+    /// Manually update a video's status
     Mark {
-        id: i64,
+        video_id: i64,
         #[arg(value_parser = ["to_listen", "liked", "disliked"])]
         status: String,
     },
-    /// Listen to queued releases one by one
+    /// Listen to unrated videos one by one
     Listen {
         #[arg(long, default_value_t = 10)]
         batch: usize,
-        /// Directory to move liked tracks to (default: delete after playing)
-        #[arg(long, value_name = "DIR")]
-        keep: Option<String>,
     },
 }
 
@@ -108,18 +105,22 @@ async fn main() -> Result<()> {
         }
 
         Command::List { status } => {
-            let status: ReleaseStatus = status.parse()?;
             let db = Db::open(DB_PATH)?;
-            let rows = db.list_releases(&status)?;
+            let filter = if status == "all" {
+                None
+            } else {
+                Some(status.parse::<ReleaseStatus>()?)
+            };
+            let rows = db.list_releases(filter.as_ref())?;
             if rows.is_empty() {
-                println!("No releases in '{status}'.");
+                println!("No releases found.");
                 return Ok(());
             }
             println!(
-                "\n{:<5} {:<8} {:<8} {:<6} {:<8} {:<30} {}",
-                "ID", "Rating", "Owners", "Year", "Videos", "Artist", "Title"
+                "\n{:<5} {:<8} {:<8} {:<6} {:<8} {:<8} {:<8} {:<30} {}",
+                "ID", "Rating", "Owners", "Year", "ToListen", "Liked", "Disliked", "Artist", "Title"
             );
-            println!("{}", "-".repeat(110));
+            println!("{}", "-".repeat(120));
             for row in &rows {
                 let r = &row.release;
                 let year = r.year.map(|y| y.to_string()).unwrap_or_default();
@@ -129,127 +130,101 @@ async fn main() -> Result<()> {
                     &r.artist
                 };
                 println!(
-                    "{:<5} {:<8.2} {:<8} {:<6} {:<8} {:<30} {}",
-                    r.id, r.rating, r.owners, year, row.video_count, artist, r.title
+                    "{:<5} {:<8.2} {:<8} {:<6} {:<8} {:<8} {:<8} {:<30} {}",
+                    r.id, r.rating, r.owners, year,
+                    row.to_listen_count, row.liked_count, row.disliked_count,
+                    artist, r.title
                 );
             }
             println!();
         }
 
-        Command::Mark { id, status } => {
+        Command::Mark { video_id, status } => {
             let status: ReleaseStatus = status.parse()?;
             let db = Db::open(DB_PATH)?;
-            if db.mark_release(id, &status)? {
-                println!("Release {id} marked as '{status}'.");
+            if db.mark_video(video_id, &status)? {
+                println!("Video {video_id} marked as '{status}'.");
             } else {
-                println!("No release found with id {id}.");
+                println!("No video found with id {video_id}.");
             }
         }
 
-        Command::Listen { batch, keep } => {
-            let keep_dir = keep.map(|k| {
-                let p = expand_tilde(&k);
-                std::fs::create_dir_all(&p).expect("failed to create keep directory");
-                p
-            });
-            cmd_listen(batch, keep_dir.as_deref())?;
+        Command::Listen { batch } => {
+            cmd_listen(batch)?;
         }
     }
 
     Ok(())
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
-    if path == "~" {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(path));
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
-    }
-    PathBuf::from(path)
-}
-
-fn cmd_listen(batch_size: usize, keep_dir: Option<&Path>) -> Result<()> {
+fn cmd_listen(batch_size: usize) -> Result<()> {
     let db = Db::open(DB_PATH)?;
-    let rows = db.next_listen_batch(batch_size)?;
+    let videos = db.next_listen_videos(batch_size)?;
 
-    if rows.is_empty() {
-        println!("No releases with videos in to_listen.");
+    if videos.is_empty() {
+        println!("No unrated videos in the queue.");
         return Ok(());
     }
 
-    let total = rows.len();
-    println!("Starting listen session: {total} releases queued.");
-    println!(
-        "Tip: close VLC to move to the next track, or answer [q]uit after any track to stop.\n"
-    );
+    let total = videos.len();
+    println!("Starting listen session: {total} unrated videos queued.");
+    println!("Tip: close VLC to move to the next track, or answer [q]uit after any track to stop.\n");
 
     let tmp_dir = std::env::temp_dir().join(format!("cratefm-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)?;
 
-    let result = run_listen_session(&db, &rows, &tmp_dir, keep_dir);
+    let result = run_listen_session(&db, &videos, &tmp_dir);
     std::fs::remove_dir_all(&tmp_dir).ok();
     result
 }
 
-fn run_listen_session(
-    db: &Db,
-    rows: &[Release],
-    tmp_dir: &Path,
-    keep_dir: Option<&Path>,
-) -> Result<()> {
-    let total = rows.len();
+fn run_listen_session(db: &Db, videos: &[ListenVideo], tmp_dir: &std::path::Path) -> Result<()> {
+    let total = videos.len();
     let mut liked = 0usize;
     let mut disliked = 0usize;
     let mut skipped = 0usize;
 
-    for (i, release) in rows.iter().enumerate() {
-        let video_url = match db.first_video_url(release.id)? {
-            Some(url) => url,
-            None => continue,
-        };
-
+    for (i, lv) in videos.iter().enumerate() {
         let track_num = i + 1;
         println!("\n[{track_num}/{total}] {}", "=".repeat(56));
-        let year = release.year.map(|y| y.to_string()).unwrap_or_default();
+        let year = lv.release_year.map(|y| y.to_string()).unwrap_or_default();
         println!(
             "  {} - {} ({})  |  Rating: {:.2}",
-            release.artist, release.title, year, release.rating
+            lv.release_artist, lv.release_title, year, lv.release_rating
         );
+        println!("  Video: {}", lv.video_title);
         println!("  {}", "=".repeat(56));
         println!("  Downloading...");
+
+        // Clear old files
+        for entry in std::fs::read_dir(tmp_dir)?.filter_map(|e| e.ok()) {
+            let _ = std::fs::remove_file(entry.path());
+        }
 
         let output_template = tmp_dir.join("%(id)s.%(ext)s");
         let dl = std::process::Command::new("yt-dlp")
             .args([
                 "-x",
-                "--audio-format",
-                "mp3",
-                "--audio-quality",
-                "0",
+                "--audio-format", "mp3",
+                "--audio-quality", "0",
                 "--no-playlist",
-                "-o",
-                output_template.to_str().unwrap(),
-                &video_url,
+                "-o", output_template.to_str().unwrap(),
+                &lv.video_url,
             ])
             .output()?;
 
         if !dl.status.success() {
             let stderr = String::from_utf8_lossy(&dl.stderr);
             println!(
-                "  Download failed — removing video and skipping.\n  {}",
+                "  Download failed — skipping.\n  {}",
                 stderr.trim()
             );
-            db.delete_video_by_url(&video_url)?;
+            db.delete_video_by_url(&lv.video_url)?;
             skipped += 1;
             continue;
         }
 
-        let files: Vec<PathBuf> = std::fs::read_dir(tmp_dir)?
+        let files: Vec<std::path::PathBuf> = std::fs::read_dir(tmp_dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.is_file())
@@ -263,11 +238,7 @@ fn run_listen_session(
 
         let filepath = files
             .iter()
-            .max_by_key(|p| {
-                p.metadata()
-                    .and_then(|m| m.modified())
-                    .ok()
-            })
+            .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
             .unwrap()
             .clone();
 
@@ -286,20 +257,14 @@ fn run_listen_session(
 
             match answer.as_str() {
                 "y" | "yes" => {
-                    db.mark_release(release.id, &ReleaseStatus::Liked)?;
-                    if let Some(keep) = keep_dir {
-                        let dest = keep.join(filepath.file_name().unwrap());
-                        std::fs::rename(&filepath, &dest)?;
-                        println!("  Saved as liked — kept at {}", dest.display());
-                    } else {
-                        std::fs::remove_file(&filepath).ok();
-                        println!("  Saved as liked.");
-                    }
+                    db.mark_video(lv.video_id, &ReleaseStatus::Liked)?;
+                    std::fs::remove_file(&filepath).ok();
+                    println!("  Saved as liked.");
                     liked += 1;
                     break;
                 }
                 "n" | "no" => {
-                    db.mark_release(release.id, &ReleaseStatus::Disliked)?;
+                    db.mark_video(lv.video_id, &ReleaseStatus::Disliked)?;
                     std::fs::remove_file(&filepath).ok();
                     println!("  Saved as disliked.");
                     disliked += 1;
@@ -307,7 +272,7 @@ fn run_listen_session(
                 }
                 "s" | "skip" => {
                     std::fs::remove_file(&filepath).ok();
-                    println!("  Skipped — still in to_listen.");
+                    println!("  Skipped — still to_listen.");
                     skipped += 1;
                     break;
                 }

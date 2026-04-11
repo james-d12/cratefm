@@ -1,7 +1,7 @@
 use anyhow::Result;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 
-use crate::models::{Release, ReleaseRow, ReleaseStatus, Video, VideoRow};
+use crate::models::{ListenVideo, Release, ReleaseRow, ReleaseStatus, Video, VideoRow};
 
 pub struct Db {
     conn: Connection,
@@ -16,6 +16,7 @@ impl Db {
     }
 
     fn init(&self) -> Result<()> {
+        // Base schema — status lives on videos, not releases.
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS releases (
@@ -29,7 +30,6 @@ impl Db {
                 rating     REAL,
                 owners     INTEGER,
                 url        TEXT,
-                status     TEXT    NOT NULL DEFAULT 'to_listen',
                 fetched_at TIMESTAMP
             );
 
@@ -37,14 +37,25 @@ impl Db {
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 release_id INTEGER NOT NULL REFERENCES releases(id),
                 title      TEXT,
-                url        TEXT UNIQUE
+                url        TEXT UNIQUE,
+                status     TEXT NOT NULL DEFAULT 'to_listen'
             );
             ",
         )?;
+
+        // Migration: add status column to videos for existing databases that
+        // predate this schema. ALTER TABLE fails if the column already exists,
+        // so we silently ignore that error.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE videos ADD COLUMN status TEXT NOT NULL DEFAULT 'to_listen';");
+
         Ok(())
     }
 
-    /// Returns all discogs_ids already stored, regardless of status.
+    // ── Read helpers ──────────────────────────────────────────────────────────
+
+    /// Returns all discogs_ids already stored.
     pub fn known_ids(&self) -> Result<std::collections::HashSet<String>> {
         let mut stmt = self.conn.prepare("SELECT discogs_id FROM releases")?;
         let ids = stmt
@@ -53,12 +64,126 @@ impl Db {
         Ok(ids)
     }
 
+    /// List releases, optionally filtered to those that have at least one video
+    /// with the given status. `None` returns all releases.
+    pub fn list_releases(
+        &self,
+        video_status: Option<&ReleaseStatus>,
+    ) -> Result<Vec<ReleaseRow>> {
+        let filter_clause = match video_status {
+            Some(s) => format!(
+                "WHERE EXISTS (SELECT 1 FROM videos v2 WHERE v2.release_id = r.id AND v2.status = '{}')",
+                s
+            ),
+            None => String::new(),
+        };
+
+        let sql = format!(
+            "SELECT r.id, r.discogs_id, r.title, r.artist, r.year,
+                    r.genre, r.style, r.rating, r.owners, r.url, r.fetched_at,
+                    COUNT(CASE WHEN v.status = 'to_listen' THEN 1 END) AS to_listen_count,
+                    COUNT(CASE WHEN v.status = 'liked'     THEN 1 END) AS liked_count,
+                    COUNT(CASE WHEN v.status = 'disliked'  THEN 1 END) AS disliked_count
+             FROM releases r
+             LEFT JOIN videos v ON v.release_id = r.id
+             {filter_clause}
+             GROUP BY r.id
+             ORDER BY r.rating DESC"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ReleaseRow {
+                    release: Release {
+                        id: row.get(0)?,
+                        discogs_id: row.get(1)?,
+                        title: row.get(2)?,
+                        artist: row.get(3)?,
+                        year: row.get(4)?,
+                        genre: row.get(5)?,
+                        style: row.get(6)?,
+                        rating: row.get(7)?,
+                        owners: row.get(8)?,
+                        url: row.get(9)?,
+                        fetched_at: row.get(10)?,
+                    },
+                    to_listen_count: row.get(11)?,
+                    liked_count: row.get(12)?,
+                    disliked_count: row.get(13)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// List all videos joined with their release info.
+    pub fn list_all_videos(&self) -> Result<Vec<VideoRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT v.id, v.release_id, v.title, v.url, v.status, r.title, r.artist
+             FROM videos v
+             JOIN releases r ON r.id = v.release_id
+             ORDER BY r.artist, r.title, v.title",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(VideoRow {
+                    video: Video {
+                        id: row.get(0)?,
+                        release_id: row.get(1)?,
+                        title: row.get(2)?,
+                        url: row.get(3)?,
+                        status: row.get::<_, String>(4)?.parse().unwrap(),
+                    },
+                    release_title: row.get(5)?,
+                    release_artist: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Return up to `limit` unrated (to_listen) videos, best-rated releases first.
+    /// Each video carries enough release context to display a listen card.
+    pub fn next_listen_videos(&self, limit: usize) -> Result<Vec<ListenVideo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT v.id, v.title, v.url,
+                    r.id, r.title, r.artist, r.year,
+                    r.genre, r.style, r.rating, r.owners
+             FROM videos v
+             JOIN releases r ON r.id = v.release_id
+             WHERE v.status = 'to_listen'
+             ORDER BY r.rating DESC, r.id, v.id
+             LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(ListenVideo {
+                    video_id: row.get(0)?,
+                    video_title: row.get(1)?,
+                    video_url: row.get(2)?,
+                    release_id: row.get(3)?,
+                    release_title: row.get(4)?,
+                    release_artist: row.get(5)?,
+                    release_year: row.get(6)?,
+                    release_genre: row.get(7)?,
+                    release_style: row.get(8)?,
+                    release_rating: row.get(9)?,
+                    release_owners: row.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    // ── Write helpers ─────────────────────────────────────────────────────────
+
     pub fn save_releases(&self, records: &[crate::discogs::PendingRelease]) -> Result<()> {
         let now = chrono::Utc::now().naive_utc().to_string();
         let mut stmt = self.conn.prepare(
             "INSERT OR IGNORE INTO releases
-                (discogs_id, title, artist, year, genre, style, rating, owners, url, status, fetched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'to_listen', ?10)",
+                (discogs_id, title, artist, year, genre, style, rating, owners, url, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?;
         for r in records {
             stmt.execute(params![
@@ -75,7 +200,9 @@ impl Db {
         }
 
         let discogs_ids: Vec<&str> = records.iter().map(|r| r.discogs_id.as_str()).collect();
-        let placeholders = discogs_ids.iter().enumerate()
+        let placeholders = discogs_ids
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("?{}", i + 1))
             .collect::<Vec<_>>()
             .join(", ");
@@ -102,113 +229,13 @@ impl Db {
         Ok(())
     }
 
-    pub fn list_releases(&self, status: &ReleaseStatus) -> Result<Vec<ReleaseRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT r.id, r.discogs_id, r.title, r.artist, r.year,
-                    r.genre, r.style, r.rating, r.owners, r.url, r.status, r.fetched_at,
-                    COUNT(v.id) as video_count
-             FROM releases r
-             LEFT JOIN videos v ON v.release_id = r.id
-             WHERE r.status = ?1
-             GROUP BY r.id
-             ORDER BY r.rating DESC",
-        )?;
-        let rows = stmt
-            .query_map(params![status.to_string()], |row| {
-                Ok(ReleaseRow {
-                    release: Release {
-                        id: row.get(0)?,
-                        discogs_id: row.get(1)?,
-                        title: row.get(2)?,
-                        artist: row.get(3)?,
-                        year: row.get(4)?,
-                        genre: row.get(5)?,
-                        style: row.get(6)?,
-                        rating: row.get(7)?,
-                        owners: row.get(8)?,
-                        url: row.get(9)?,
-                        status: row.get::<_, String>(10)?.parse().unwrap(),
-                        fetched_at: row.get(11)?,
-                    },
-                    video_count: row.get(12)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub fn mark_release(&self, id: i64, status: &ReleaseStatus) -> Result<bool> {
+    /// Update the status of a single video. Returns `true` if a row was updated.
+    pub fn mark_video(&self, video_id: i64, status: &ReleaseStatus) -> Result<bool> {
         let n = self.conn.execute(
-            "UPDATE releases SET status = ?1 WHERE id = ?2",
-            params![status.to_string(), id],
+            "UPDATE videos SET status = ?1 WHERE id = ?2",
+            params![status.to_string(), video_id],
         )?;
         Ok(n > 0)
-    }
-
-    /// Fetch up to `limit` to_listen releases that have at least one video, best rated first.
-    pub fn next_listen_batch(&self, limit: usize) -> Result<Vec<Release>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT r.id, r.discogs_id, r.title, r.artist, r.year,
-                    r.genre, r.style, r.rating, r.owners, r.url, r.status, r.fetched_at
-             FROM releases r
-             WHERE r.status = 'to_listen'
-               AND EXISTS (SELECT 1 FROM videos v WHERE v.release_id = r.id)
-             ORDER BY r.rating DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt
-            .query_map(params![limit as i64], |row| {
-                Ok(Release {
-                    id: row.get(0)?,
-                    discogs_id: row.get(1)?,
-                    title: row.get(2)?,
-                    artist: row.get(3)?,
-                    year: row.get(4)?,
-                    genre: row.get(5)?,
-                    style: row.get(6)?,
-                    rating: row.get(7)?,
-                    owners: row.get(8)?,
-                    url: row.get(9)?,
-                    status: row.get::<_, String>(10)?.parse().unwrap(),
-                    fetched_at: row.get(11)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub fn first_video_url(&self, release_id: i64) -> Result<Option<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT url FROM videos WHERE release_id = ?1 LIMIT 1")?;
-        let url = stmt
-            .query_row(params![release_id], |row| row.get(0))
-            .optional()?;
-        Ok(url)
-    }
-
-    pub fn list_all_videos(&self) -> Result<Vec<VideoRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT v.id, v.release_id, v.title, v.url, r.title, r.artist
-             FROM videos v
-             JOIN releases r ON r.id = v.release_id
-             ORDER BY r.artist, r.title, v.title",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(VideoRow {
-                    video: Video {
-                        id: row.get(0)?,
-                        release_id: row.get(1)?,
-                        title: row.get(2)?,
-                        url: row.get(3)?,
-                    },
-                    release_title: row.get(4)?,
-                    release_artist: row.get(5)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
     }
 
     pub fn delete_video_by_url(&self, url: &str) -> Result<()> {

@@ -63,6 +63,14 @@ pub struct ReleaseRow {
     pub video_count: i64,
 }
 
+/// A video joined with its release info, used for the videos list.
+#[derive(Debug, Clone)]
+pub struct VideoRow {
+    pub video: Video,
+    pub release_title: String,
+    pub release_artist: String,
+}
+
 /// Parameters for the `fetch` command.
 #[derive(Debug, Clone)]
 pub struct FetchParams {

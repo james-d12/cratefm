@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::models::{Release, ReleaseRow, ReleaseStatus};
+use crate::models::{Release, ReleaseRow, ReleaseStatus, Video, VideoRow};
 
 pub struct Db {
     conn: Connection,
@@ -185,6 +185,30 @@ impl Db {
             .query_row(params![release_id], |row| row.get(0))
             .optional()?;
         Ok(url)
+    }
+
+    pub fn list_all_videos(&self) -> Result<Vec<VideoRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT v.id, v.release_id, v.title, v.url, r.title, r.artist
+             FROM videos v
+             JOIN releases r ON r.id = v.release_id
+             ORDER BY r.artist, r.title, v.title",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(VideoRow {
+                    video: Video {
+                        id: row.get(0)?,
+                        release_id: row.get(1)?,
+                        title: row.get(2)?,
+                        url: row.get(3)?,
+                    },
+                    release_title: row.get(4)?,
+                    release_artist: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn delete_video_by_url(&self, url: &str) -> Result<()> {

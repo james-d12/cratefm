@@ -16,7 +16,6 @@ impl Db {
     }
 
     fn init(&self) -> Result<()> {
-        // Base schema — status lives on videos, not releases.
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS releases (
@@ -31,6 +30,14 @@ impl Db {
                 owners     INTEGER,
                 url        TEXT,
                 fetched_at TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS images (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                release_id   INTEGER NOT NULL REFERENCES releases(id),
+                url          TEXT UNIQUE,
+                width        INTEGER,
+                height       INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS videos (
@@ -51,18 +58,8 @@ impl Db {
             );
             ",
         )?;
-
-        // Migration: add status column to videos for existing databases that
-        // predate this schema. ALTER TABLE fails if the column already exists,
-        // so we silently ignore that error.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE videos ADD COLUMN status TEXT NOT NULL DEFAULT 'to_listen';");
-
         Ok(())
     }
-
-    // ── Read helpers ──────────────────────────────────────────────────────────
 
     /// Returns all discogs_ids already stored.
     pub fn known_ids(&self) -> Result<std::collections::HashSet<String>> {
@@ -75,10 +72,7 @@ impl Db {
 
     /// List releases, optionally filtered to those that have at least one video
     /// with the given status. `None` returns all releases.
-    pub fn list_releases(
-        &self,
-        video_status: Option<&ReleaseStatus>,
-    ) -> Result<Vec<ReleaseRow>> {
+    pub fn list_releases(&self, video_status: Option<&ReleaseStatus>) -> Result<Vec<ReleaseRow>> {
         let filter_clause = match video_status {
             Some(s) => format!(
                 "WHERE EXISTS (SELECT 1 FROM videos v2 WHERE v2.release_id = r.id AND v2.status = '{}')",
@@ -156,7 +150,11 @@ impl Db {
     /// Each video carries enough release context to display a listen card.
     /// If `style` is `Some(s)` with a non-empty string, only videos whose release
     /// style matches (case-insensitive) are returned.
-    pub fn next_listen_videos(&self, limit: usize, style: Option<&str>) -> Result<Vec<ListenVideo>> {
+    pub fn next_listen_videos(
+        &self,
+        limit: usize,
+        style: Option<&str>,
+    ) -> Result<Vec<ListenVideo>> {
         let style_filter = style.filter(|s| !s.is_empty());
 
         let sql = format!(
@@ -213,8 +211,16 @@ impl Db {
         )?;
         for r in records {
             stmt.execute(params![
-                r.discogs_id, r.title, r.artist, r.year,
-                r.genre, r.style, r.rating, r.owners, r.url, now
+                r.discogs_id,
+                r.title,
+                r.artist,
+                r.year,
+                r.genre,
+                r.style,
+                r.rating,
+                r.owners,
+                r.url,
+                now
             ])?;
         }
         Ok(())
@@ -233,9 +239,42 @@ impl Db {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let sql = format!(
-            "SELECT discogs_id, id FROM releases WHERE discogs_id IN ({placeholders})"
-        );
+        let sql =
+            format!("SELECT discogs_id, id FROM releases WHERE discogs_id IN ({placeholders})");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let id_map: std::collections::HashMap<String, i64> = stmt
+            .query_map(rusqlite::params_from_iter(discogs_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut stmt = self
+            .conn
+            .prepare("INSERT OR IGNORE INTO videos (release_id, title, url) VALUES (?1, ?2, ?3)")?;
+        for v in records {
+            if let Some(&release_id) = id_map.get(&v.discogs_id) {
+                stmt.execute(params![release_id, v.title, v.url])?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn save_images(&self, records: &[crate::discogs::PendingImage]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let discogs_ids: Vec<&str> = records.iter().map(|r| r.discogs_id.as_str()).collect();
+        let placeholders = discogs_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql =
+            format!("SELECT discogs_id, id FROM releases WHERE discogs_id IN ({placeholders})");
         let mut stmt = self.conn.prepare(&sql)?;
         let id_map: std::collections::HashMap<String, i64> = stmt
             .query_map(rusqlite::params_from_iter(discogs_ids.iter()), |row| {
@@ -245,11 +284,11 @@ impl Db {
             .collect();
 
         let mut stmt = self.conn.prepare(
-            "INSERT OR IGNORE INTO videos (release_id, title, url) VALUES (?1, ?2, ?3)",
+            "INSERT OR IGNORE INTO images (release_id, url, width, height) VALUES (?1, ?2, ?3, ?4)",
         )?;
         for v in records {
             if let Some(&release_id) = id_map.get(&v.discogs_id) {
-                stmt.execute(params![release_id, v.title, v.url])?;
+                stmt.execute(params![release_id, v.url, v.width, v.height])?;
             }
         }
         Ok(())

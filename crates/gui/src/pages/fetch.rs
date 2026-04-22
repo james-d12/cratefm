@@ -210,14 +210,17 @@ async fn do_fetch(params: FetchParams) -> Result<(usize, usize), String> {
     let start_page = db
         .get_cursor(&params.genre, &params.style, params.year)
         .map_err(|e| e.to_string())?;
-    let (releases, videos, next_page) = fetch_releases(&params, &known_ids, start_page)
+
+    let releases = fetch_releases(&params, &known_ids, start_page)
         .await
         .map_err(|e| e.to_string())?;
-    db.save_releases(&releases).map_err(|e| e.to_string())?;
-    db.save_videos(&videos).map_err(|e| e.to_string())?;
-    db.set_cursor(&params.genre, &params.style, params.year, next_page)
+
+    db.save_releases(&releases.releases).map_err(|e| e.to_string())?;
+    db.save_videos(&releases.videos).map_err(|e| e.to_string())?;
+    db.save_images(&releases.images).map_err(|e| e.to_string())?;
+    db.set_cursor(&params.genre, &params.style, params.year, releases.next_page)
         .map_err(|e| e.to_string())?;
-    Ok((releases.len(), videos.len()))
+    Ok((releases.releases.len(), releases.videos.len()))
 }
 
 fn labeled_field<'a>(

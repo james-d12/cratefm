@@ -94,15 +94,15 @@ async fn main() -> Result<()> {
                 "Searching for {} / {} releases from {} (starting page {start_page})...",
                 params.genre, params.style, params.year
             );
-            let (releases, videos, next_page) =
-                fetch_releases(&params, &known_ids, start_page).await?;
-            db.save_releases(&releases)?;
-            db.save_videos(&videos)?;
-            db.set_cursor(&params.genre, &params.style, params.year, next_page)?;
+            let releases = fetch_releases(&params, &known_ids, start_page).await?;
+            db.save_releases(&releases.releases)?;
+            db.save_videos(&releases.videos)?;
+            db.save_images(&releases.images)?;
+            db.set_cursor(&params.genre, &params.style, params.year, releases.next_page)?;
             println!(
-                "\nDone. {} releases, {} videos added. Cursor saved at page {next_page}.",
-                releases.len(),
-                videos.len()
+                "\nDone. {} releases, {} videos added.",
+                releases.releases.len(),
+                releases.videos.len()
             );
         }
 

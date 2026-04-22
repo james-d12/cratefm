@@ -143,9 +143,13 @@ enum Message {
     VidRefresh,
     VidLoaded(Result<Vec<VideoRow>, String>),
 
+    // Utility
+    OpenUrl(String),
+
     // Listen session
     ListenBatchInput(String),
     ListenStyleInput(String),
+    ListenReset,
     ListenStart,
     ListenBatchLoaded(Result<Vec<ListenVideo>, String>),
     ListenDownloadDone(Result<PathBuf, String>),
@@ -272,9 +276,22 @@ impl App {
                 Task::none()
             }
 
+            // ── Utility ───────────────────────────────────────────────────
+            Message::OpenUrl(url) => {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                Task::none()
+            }
+
             // ── Listen session ────────────────────────────────────────────
             Message::ListenBatchInput(v) => { self.listen_batch = v; Task::none() }
             Message::ListenStyleInput(v) => { self.listen_style = v; Task::none() }
+            Message::ListenReset => {
+                self.listen_phase = ListenPhase::Idle;
+                self.listen_current = None;
+                self.listen_queue = vec![];
+                self.listen_error = None;
+                Task::none()
+            }
 
             Message::ListenStart => {
                 self.listen_phase = ListenPhase::Loading;
@@ -673,7 +690,7 @@ impl App {
                     s.liked, s.disliked, s.skipped
                 )),
                 button("Start new session")
-                    .on_press(Message::ListenStart)
+                    .on_press(Message::ListenReset)
                     .padding([8, 20]),
             ]
             .spacing(16)
@@ -693,6 +710,8 @@ impl App {
 
         // Release + video card
         let year_str = video.release_year.map(|y| format!(" ({y})")).unwrap_or_default();
+        let discogs_url = format!("https://www.discogs.com/release/{}", video.release_id);
+        let youtube_url = video.video_url.clone();
         let card = column![
             text(format!("{}{}", video.release_title, year_str)).size(22),
             text(format!("by {}", video.release_artist)).size(16),
@@ -702,6 +721,17 @@ impl App {
             ))
             .size(13),
             text(format!("Video: {}", video.video_title)).size(13),
+            row![
+                button(text("Discogs").size(12))
+                    .on_press(Message::OpenUrl(discogs_url))
+                    .padding([4, 10])
+                    .style(button::secondary),
+                button(text("YouTube").size(12))
+                    .on_press(Message::OpenUrl(youtube_url))
+                    .padding([4, 10])
+                    .style(button::secondary),
+            ]
+            .spacing(8),
         ]
         .spacing(4);
 

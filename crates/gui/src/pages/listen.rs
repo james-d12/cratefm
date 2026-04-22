@@ -1,4 +1,4 @@
-use crate::{DB_PATH, ListenPhase, ListenStats, RateAction, download_video, play_file};
+use crate::DB_PATH;
 use cratefm_core::db::Db;
 use cratefm_core::models::{ListenVideo, ReleaseStatus};
 use iced::widget::{button, container, horizontal_rule, row, text, text_input};
@@ -16,6 +16,31 @@ pub enum Message {
     ListenDownloadDone(Result<PathBuf, String>),
     ListenPlaybackDone(u64), // carries generation id
     ListenRate(RateAction),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ListenPhase {
+    Idle,
+    Loading,
+    Downloading,
+    Playing,       // VLC running — buttons enabled
+    WaitingRating, // VLC closed — waiting for user action
+    Done,
+}
+
+#[derive(Debug, Clone)]
+enum RateAction {
+    Like,
+    Dislike,
+    Skip,
+    Quit,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ListenStats {
+    liked: usize,
+    disliked: usize,
+    skipped: usize,
 }
 
 pub struct ListenPage {
@@ -346,4 +371,75 @@ impl ListenPage {
         )
         .into()
     }
+}
+
+/// Download a video using yt-dlp and return the file path.
+async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
+    let video_url = video.video_url;
+
+    let tmp_dir = std::env::temp_dir().join(format!("cratefm-{}", std::process::id()));
+    tokio::fs::create_dir_all(&tmp_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Clear any leftover files from a previous track
+    if let Ok(mut entries) = tokio::fs::read_dir(&tmp_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
+
+    let output_template = tmp_dir.join("%(id)s.%(ext)s");
+    let status = tokio::process::Command::new("yt-dlp")
+        .args([
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "0",
+            "--no-playlist",
+            "-o",
+            output_template.to_str().unwrap_or("%(id)s.%(ext)s"),
+            &video_url,
+        ])
+        .status()
+        .await
+        .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
+
+    if !status.success() {
+        return Err("yt-dlp exited with an error".into());
+    }
+
+    // Find the file that was just written
+    let mut entries = tokio::fs::read_dir(&tmp_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.is_file() {
+            if let Ok(meta) = path.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if best.as_ref().map_or(true, |(_, t)| modified > *t) {
+                        best = Some((path, modified));
+                    }
+                }
+            }
+        }
+    }
+
+    best.map(|(p, _)| p)
+        .ok_or_else(|| "No file found after yt-dlp download".into())
+}
+
+/// Launch VLC and wait for it to exit. Returns unit regardless of VLC's exit code.
+async fn play_file(filepath: PathBuf) {
+    let _ = tokio::process::Command::new("vlc")
+        .args([
+            "--play-and-exit",
+            "--quiet",
+            filepath.to_str().unwrap_or(""),
+        ])
+        .status()
+        .await;
 }

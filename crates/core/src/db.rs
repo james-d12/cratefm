@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{Connection, params};
 
-use crate::models::{ListenVideo, Release, ReleaseRow, ReleaseStatus, Video, VideoRow};
+use crate::models::{Image, ImageRow, ListenVideo, Release, ReleaseRow, ReleaseStatus, Video, VideoRow};
 
 pub struct Db {
     conn: Connection,
@@ -37,7 +37,8 @@ impl Db {
                 release_id   INTEGER NOT NULL REFERENCES releases(id),
                 url          TEXT UNIQUE,
                 width        INTEGER,
-                height       INTEGER
+                height       INTEGER,
+                image_type   TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS videos (
@@ -140,6 +141,32 @@ impl Db {
                     },
                     release_title: row.get(5)?,
                     release_artist: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn list_all_images(&self) -> Result<Vec<ImageRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT i.id, i.release_id, i.url, i.width, i.height, i.image_type, r.title, r.artist
+             FROM images i
+             JOIN releases r ON r.id = i.release_id
+             ORDER BY r.artist, r.title",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ImageRow {
+                    image: Image {
+                        id: row.get(0)?,
+                        release_id: row.get(1)?,
+                        url: row.get(2)?,
+                        width: row.get(3)?,
+                        height: row.get(4)?,
+                        image_type: row.get(5)?,
+                    },
+                    release_title: row.get(6)?,
+                    release_artist: row.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -284,11 +311,11 @@ impl Db {
             .collect();
 
         let mut stmt = self.conn.prepare(
-            "INSERT OR IGNORE INTO images (release_id, url, width, height) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO images (release_id, url, width, height, image_type) VALUES (?1, ?2, ?3, ?4, ?5)",
         )?;
         for v in records {
             if let Some(&release_id) = id_map.get(&v.discogs_id) {
-                stmt.execute(params![release_id, v.url, v.width, v.height])?;
+                stmt.execute(params![release_id, v.url, v.width, v.height, v.image_type])?;
             }
         }
         Ok(())

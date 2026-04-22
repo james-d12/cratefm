@@ -1,10 +1,11 @@
 mod pages;
 
 use crate::pages::fetch::FetchPage;
+use crate::pages::images::ImagesPage;
 use crate::pages::listen::ListenPage;
 use crate::pages::releases::ReleasesPage;
 use crate::pages::videos::VideosPage;
-use crate::pages::{fetch, listen, releases, videos};
+use crate::pages::{fetch, images, listen, releases, videos};
 use iced::{
     Alignment, Element, Length, Task, Theme,
     widget::{Space, button, column, horizontal_rule, row, text},
@@ -26,6 +27,7 @@ enum Page {
     Releases,
     Videos,
     Listen,
+    Images,
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ struct App {
     fetch_page: FetchPage,
     videos_page: VideosPage,
     releases_page: ReleasesPage,
+    images_page: ImagesPage,
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
@@ -48,12 +51,14 @@ enum Message {
     GoReleases,
     GoVideos,
     GoListen,
+    GoImages,
 
     // Listen
     Listen(listen::Message),
     Fetch(fetch::Message),
     Videos(videos::Message),
     Releases(releases::Message),
+    Images(images::Message),
 }
 
 // ─── App impl ────────────────────────────────────────────────────────────────
@@ -66,6 +71,7 @@ impl App {
             fetch_page: FetchPage::new(),
             videos_page: VideosPage::new(),
             releases_page: ReleasesPage::new(),
+            images_page: ImagesPage::new(),
         };
         (app, Task::none())
     }
@@ -93,11 +99,16 @@ impl App {
                 self.page = Page::Listen;
                 Task::none()
             }
+            Message::GoImages => {
+                self.page = Page::Images;
+                self.images_page.load().map(Message::Images)
+            }
 
             Message::Listen(msg) => self.listen_page.update(msg).map(Message::Listen),
             Message::Fetch(msg) => self.fetch_page.update(msg).map(Message::Fetch),
             Message::Videos(msg) => self.videos_page.update(msg).map(Message::Videos),
             Message::Releases(msg) => self.releases_page.update(msg).map(Message::Releases),
+            Message::Images(msg) => self.images_page.update(msg).map(Message::Images),
         }
     }
 
@@ -108,6 +119,7 @@ impl App {
             nav_btn("Fetch", Message::GoFetch, self.page == Page::Fetch),
             nav_btn("Releases", Message::GoReleases, self.page == Page::Releases),
             nav_btn("Videos", Message::GoVideos, self.page == Page::Videos),
+            nav_btn("Images", Message::GoImages, self.page == Page::Images),
             nav_btn("Listen", Message::GoListen, self.page == Page::Listen),
             Space::with_width(Length::Fill),
         ]
@@ -120,6 +132,7 @@ impl App {
             Page::Releases => self.releases_page.view_releases().map(Message::Releases),
             Page::Videos => self.videos_page.view_videos().map(Message::Videos),
             Page::Listen => self.listen_page.view_listen().map(Message::Listen),
+            Page::Images => self.images_page.view_images().map(Message::Images),
         };
 
         column![nav, horizontal_rule(1), body]

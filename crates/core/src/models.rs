@@ -57,6 +57,16 @@ pub struct Video {
     pub status: ReleaseStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub id: i64,
+    pub release_id: i64,
+    pub url: String,
+    pub image_type: String,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// A release joined with per-status video counts, used for the `list` command.
 #[derive(Debug, Clone)]
 pub struct ReleaseRow {
@@ -76,6 +86,13 @@ impl ReleaseRow {
 #[derive(Debug, Clone)]
 pub struct VideoRow {
     pub video: Video,
+    pub release_title: String,
+    pub release_artist: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageRow {
+    pub image: Image,
     pub release_title: String,
     pub release_artist: String,
 }

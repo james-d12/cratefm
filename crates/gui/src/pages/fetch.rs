@@ -7,16 +7,16 @@ use iced::{Alignment, Element, Task};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    FToken(String),
-    FGenre(String),
-    FStyle(String),
-    FYear(String),
-    FLimit(String),
-    FMinOwners(String),
-    FMaxOwners(String),
-    FMinRating(String),
-    DoFetch,
-    FetchDone(Result<(usize, usize), String>),
+    TokenChanged(String),
+    GenreChanged(String),
+    StyleChanged(String),
+    YearChanged(String),
+    LimitChanged(String),
+    MinOwnersChanged(String),
+    MaxOwnersChanged(String),
+    MinRatingChanged(String),
+    FetchRequested,
+    FetchCompleted(Result<(usize, usize), String>),
 }
 
 #[derive(Debug, Clone)]
@@ -27,83 +27,89 @@ enum FetchState {
     Error(String),
 }
 
+struct FetchForm {
+    token: String,
+    genre: String,
+    style: String,
+    year: String,
+    limit: String,
+    min_owners: String,
+    max_owners: String,
+    min_rating: String,
+}
+
 pub struct FetchPage {
-    f_token: String,
-    f_genre: String,
-    f_style: String,
-    f_year: String,
-    f_limit: String,
-    f_min_owners: String,
-    f_max_owners: String,
-    f_min_rating: String,
+    fetch_form: FetchForm,
     fetch_state: FetchState,
 }
 
 impl FetchPage {
     pub fn new() -> FetchPage {
         FetchPage {
-            f_token: String::new(),
-            f_genre: "Electronic".into(),
-            f_style: "Jungle".into(),
-            f_year: "1995".into(),
-            f_limit: "10".into(),
-            f_min_owners: "10".into(),
-            f_max_owners: String::new(),
-            f_min_rating: "4.0".into(),
+            fetch_form: FetchForm {
+                token: String::new(),
+                genre: "Electronic".into(),
+                style: "Jungle".into(),
+                year: "1995".into(),
+                limit: "10".into(),
+                min_owners: "10".into(),
+                max_owners: String::new(),
+                min_rating: "4.0".into(),
+            },
             fetch_state: FetchState::Idle,
         }
     }
 
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::FToken(v) => {
-                self.f_token = v;
+            Message::TokenChanged(v) => {
+                self.fetch_form.token = v;
                 Task::none()
             }
-            Message::FGenre(v) => {
-                self.f_genre = v;
+            Message::GenreChanged(v) => {
+                self.fetch_form.genre = v;
                 Task::none()
             }
-            Message::FStyle(v) => {
-                self.f_style = v;
+            Message::StyleChanged(v) => {
+                self.fetch_form.style = v;
                 Task::none()
             }
-            Message::FYear(v) => {
-                self.f_year = v;
+            Message::YearChanged(v) => {
+                self.fetch_form.year = v;
                 Task::none()
             }
-            Message::FLimit(v) => {
-                self.f_limit = v;
+            Message::LimitChanged(v) => {
+                self.fetch_form.limit = v;
                 Task::none()
             }
-            Message::FMinOwners(v) => {
-                self.f_min_owners = v;
+            Message::MinOwnersChanged(v) => {
+                self.fetch_form.min_owners = v;
                 Task::none()
             }
-            Message::FMaxOwners(v) => {
-                self.f_max_owners = v;
+            Message::MaxOwnersChanged(v) => {
+                self.fetch_form.max_owners = v;
                 Task::none()
             }
-            Message::FMinRating(v) => {
-                self.f_min_rating = v;
+            Message::MinRatingChanged(v) => {
+                self.fetch_form.min_rating = v;
                 Task::none()
             }
 
-            Message::DoFetch => {
+            Message::FetchRequested => {
                 let params = FetchParams {
-                    token: self.f_token.clone(),
-                    genre: self.f_genre.clone(),
-                    style: self.f_style.clone(),
-                    year: self.f_year.parse().unwrap_or(2020),
-                    limit: self.f_limit.parse().unwrap_or(10),
-                    min_owners: self.f_min_owners.parse().unwrap_or(10),
-                    max_owners: self.f_max_owners.parse().ok(),
-                    min_rating: self.f_min_rating.parse().ok(),
+                    token: self.fetch_form.token.clone(),
+                    genre: self.fetch_form.genre.clone(),
+                    style: self.fetch_form.style.clone(),
+                    year: self.fetch_form.year.parse().unwrap_or(2020),
+                    limit: self.fetch_form.limit.parse().unwrap_or(10),
+                    min_owners: self.fetch_form.min_owners.parse().unwrap_or(10),
+                    max_owners: self.fetch_form.max_owners.parse().ok(),
+                    min_rating: self.fetch_form.min_rating.parse().ok(),
                 };
                 self.fetch_state = FetchState::Running;
-                Task::perform(do_fetch(params), Message::FetchDone)
+                Task::perform(do_fetch(params), Message::FetchCompleted)
             }
-            Message::FetchDone(result) => {
+            Message::FetchCompleted(result) => {
                 self.fetch_state = match result {
                     Ok((r, v)) => FetchState::Done {
                         releases: r,
@@ -122,37 +128,42 @@ impl FetchPage {
         let form: Column<Message> = iced::widget::column![
             labeled_field(
                 "Token",
-                text_input("Discogs API token", &self.f_token)
-                    .on_input(Message::FToken)
+                text_input("Discogs API token", &self.fetch_form.token)
+                    .on_input(Message::TokenChanged)
                     .secure(true)
             ),
             labeled_field(
                 "Genre",
-                text_input("e.g. Electronic", &self.f_genre).on_input(Message::FGenre)
+                text_input("e.g. Electronic", &self.fetch_form.genre)
+                    .on_input(Message::GenreChanged)
             ),
             labeled_field(
                 "Style",
-                text_input("e.g. Techno", &self.f_style).on_input(Message::FStyle)
+                text_input("e.g. Techno", &self.fetch_form.style).on_input(Message::StyleChanged)
             ),
             labeled_field(
                 "Year",
-                text_input("e.g. 2020", &self.f_year).on_input(Message::FYear)
+                text_input("e.g. 2020", &self.fetch_form.year).on_input(Message::YearChanged)
             ),
             labeled_field(
                 "Limit",
-                text_input("number of releases", &self.f_limit).on_input(Message::FLimit)
+                text_input("number of releases", &self.fetch_form.limit)
+                    .on_input(Message::LimitChanged)
             ),
             labeled_field(
                 "Min owners",
-                text_input("e.g. 10", &self.f_min_owners).on_input(Message::FMinOwners)
+                text_input("e.g. 10", &self.fetch_form.min_owners)
+                    .on_input(Message::MinOwnersChanged)
             ),
             labeled_field(
                 "Max owners",
-                text_input("e.g. 500", &self.f_max_owners).on_input(Message::FMaxOwners)
+                text_input("e.g. 500", &self.fetch_form.max_owners)
+                    .on_input(Message::MaxOwnersChanged)
             ),
             labeled_field(
                 "Min rating",
-                text_input("optional, e.g. 3.5", &self.f_min_rating).on_input(Message::FMinRating)
+                text_input("optional, e.g. 3.5", &self.fetch_form.min_rating)
+                    .on_input(Message::MinRatingChanged)
             ),
         ]
         .spacing(10)
@@ -168,7 +179,7 @@ impl FetchPage {
             if is_running {
                 b
             } else {
-                b.on_press(Message::DoFetch)
+                b.on_press(Message::FetchRequested)
             }
         };
 

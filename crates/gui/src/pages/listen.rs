@@ -420,7 +420,7 @@ async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
         if path.is_file() {
             if let Ok(meta) = path.metadata() {
                 if let Ok(modified) = meta.modified() {
-                    if best.as_ref().map_or(true, |(_, t)| modified > *t) {
+                    if best.as_ref().is_none_or(|(_, t)| modified > *t) {
                         best = Some((path, modified));
                     }
                 }

@@ -8,23 +8,23 @@ use iced::{Alignment, Element, Length, Task};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    VidSearch(String),
-    VidRefresh,
-    VidLoaded(Result<Vec<VideoRow>, String>),
+    Search(String),
+    Refresh,
+    VideoLoaded(Result<Vec<VideoRow>, String>),
 }
 
 pub struct VideosPage {
-    vid_search: String,
-    vid_rows: Vec<VideoRow>,
-    vid_error: Option<String>,
+    search: String,
+    rows: Vec<VideoRow>,
+    error: Option<String>,
 }
 
 impl VideosPage {
     pub fn new() -> VideosPage {
         VideosPage {
-            vid_search: String::new(),
-            vid_rows: vec![],
-            vid_error: None,
+            search: String::new(),
+            rows: vec![],
+            error: None,
         }
     }
 
@@ -34,18 +34,18 @@ impl VideosPage {
 
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::VidSearch(v) => {
-                self.vid_search = v;
+            Message::Search(v) => {
+                self.search = v;
                 Task::none()
             }
-            Message::VidRefresh => load_videos(),
-            Message::VidLoaded(result) => {
+            Message::Refresh => load_videos(),
+            Message::VideoLoaded(result) => {
                 match result {
                     Ok(rows) => {
-                        self.vid_rows = rows;
-                        self.vid_error = None;
+                        self.rows = rows;
+                        self.error = None;
                     }
-                    Err(e) => self.vid_error = Some(e),
+                    Err(e) => self.error = Some(e),
                 }
                 Task::none()
             }
@@ -54,22 +54,22 @@ impl VideosPage {
 
     pub fn view_videos(&self) -> Element<'_, Message> {
         let filters = row![
-            text_input("Search artist / title / URL…", &self.vid_search)
-                .on_input(Message::VidSearch)
+            text_input("Search artist / title / URL…", &self.search)
+                .on_input(Message::Search)
                 .width(380),
             Space::with_width(Length::Fill),
-            button("Refresh").on_press(Message::VidRefresh),
+            button("Refresh").on_press(Message::Refresh),
         ]
         .spacing(8)
         .padding([8, 16])
         .align_y(Alignment::Center);
 
-        let content: Element<Message> = if let Some(err) = &self.vid_error {
+        let content: Element<Message> = if let Some(err) = &self.error {
             container(text(format!("Error: {err}"))).padding(16).into()
         } else {
-            let search = self.vid_search.to_lowercase();
+            let search = self.search.to_lowercase();
             let visible: Vec<_> = self
-                .vid_rows
+                .rows
                 .iter()
                 .filter(|vr| {
                     search.is_empty()
@@ -151,6 +151,6 @@ fn load_videos() -> Task<Message> {
             let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
             db.list_all_videos().map_err(|e| e.to_string())
         },
-        Message::VidLoaded,
+        Message::VideoLoaded,
     )
 }

@@ -8,50 +8,50 @@ use iced::{Alignment, Element, Length, Task};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelStatusChanged(ReleaseStatus),
-    RelSearch(String),
-    RelRefresh,
-    RelLoaded(Result<Vec<ReleaseRow>, String>),
+    StatusChanged(ReleaseStatus),
+    Search(String),
+    Refresh,
+    ReleaseLoaded(Result<Vec<ReleaseRow>, String>),
 }
 pub struct ReleasesPage {
-    rel_status: ReleaseStatus,
-    rel_search: String,
-    rel_rows: Vec<ReleaseRow>,
-    rel_error: Option<String>,
+    status: ReleaseStatus,
+    search: String,
+    rows: Vec<ReleaseRow>,
+    error: Option<String>,
 }
 
 impl ReleasesPage {
     pub fn new() -> ReleasesPage {
         ReleasesPage {
-            rel_status: ReleaseStatus::ToListen,
-            rel_search: String::new(),
-            rel_rows: vec![],
-            rel_error: None,
+            status: ReleaseStatus::ToListen,
+            search: String::new(),
+            rows: vec![],
+            error: None,
         }
     }
 
     pub fn load(&self) -> Task<Message> {
-        load_releases(self.rel_status.clone())
+        load_releases(self.status.clone())
     }
 
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::RelStatusChanged(status) => {
-                self.rel_status = status.clone();
+            Message::StatusChanged(status) => {
+                self.status = status.clone();
                 load_releases(status)
             }
-            Message::RelSearch(v) => {
-                self.rel_search = v;
+            Message::Search(v) => {
+                self.search = v;
                 Task::none()
             }
-            Message::RelRefresh => load_releases(self.rel_status.clone()),
-            Message::RelLoaded(result) => {
+            Message::Refresh => load_releases(self.status.clone()),
+            Message::ReleaseLoaded(result) => {
                 match result {
                     Ok(rows) => {
-                        self.rel_rows = rows;
-                        self.rel_error = None;
+                        self.rows = rows;
+                        self.error = None;
                     }
-                    Err(e) => self.rel_error = Some(e),
+                    Err(e) => self.error = Some(e),
                 }
                 Task::none()
             }
@@ -69,25 +69,25 @@ impl ReleasesPage {
             text("Status:"),
             pick_list(
                 status_opts,
-                Some(self.rel_status.clone()),
-                Message::RelStatusChanged
+                Some(self.status.clone()),
+                Message::StatusChanged
             ),
-            text_input("Search artist / title…", &self.rel_search)
-                .on_input(Message::RelSearch)
+            text_input("Search artist / title…", &self.search)
+                .on_input(Message::Search)
                 .width(280),
             Space::with_width(Length::Fill),
-            button("Refresh").on_press(Message::RelRefresh),
+            button("Refresh").on_press(Message::Refresh),
         ]
         .spacing(8)
         .padding([8, 16])
         .align_y(Alignment::Center);
 
-        let content: Element<Message> = if let Some(err) = &self.rel_error {
+        let content: Element<Message> = if let Some(err) = &self.error {
             container(text(format!("Error: {err}"))).padding(16).into()
         } else {
-            let search = self.rel_search.to_lowercase();
+            let search = self.search.to_lowercase();
             let visible: Vec<_> = self
-                .rel_rows
+                .rows
                 .iter()
                 .filter(|rr| {
                     search.is_empty()
@@ -166,7 +166,7 @@ fn load_releases(status: ReleaseStatus) -> Task<Message> {
             let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
             db.list_releases(Some(&status)).map_err(|e| e.to_string())
         },
-        Message::RelLoaded,
+        Message::ReleaseLoaded,
     )
 }
 

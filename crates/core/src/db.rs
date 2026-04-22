@@ -145,34 +145,51 @@ impl Db {
 
     /// Return up to `limit` unrated (to_listen) videos, best-rated releases first.
     /// Each video carries enough release context to display a listen card.
-    pub fn next_listen_videos(&self, limit: usize) -> Result<Vec<ListenVideo>> {
-        let mut stmt = self.conn.prepare(
+    /// If `style` is `Some(s)` with a non-empty string, only videos whose release
+    /// style matches (case-insensitive) are returned.
+    pub fn next_listen_videos(&self, limit: usize, style: Option<&str>) -> Result<Vec<ListenVideo>> {
+        let style_filter = style.filter(|s| !s.is_empty());
+
+        let sql = format!(
             "SELECT v.id, v.title, v.url,
                     r.id, r.title, r.artist, r.year,
                     r.genre, r.style, r.rating, r.owners
              FROM videos v
              JOIN releases r ON r.id = v.release_id
-             WHERE v.status = 'to_listen'
+             WHERE v.status = 'to_listen'{}
              ORDER BY r.rating DESC, r.id, v.id
              LIMIT ?1",
-        )?;
-        let rows = stmt
-            .query_map(params![limit as i64], |row| {
-                Ok(ListenVideo {
-                    video_id: row.get(0)?,
-                    video_title: row.get(1)?,
-                    video_url: row.get(2)?,
-                    release_id: row.get(3)?,
-                    release_title: row.get(4)?,
-                    release_artist: row.get(5)?,
-                    release_year: row.get(6)?,
-                    release_genre: row.get(7)?,
-                    release_style: row.get(8)?,
-                    release_rating: row.get(9)?,
-                    release_owners: row.get(10)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            if style_filter.is_some() {
+                " AND r.style LIKE ?2"
+            } else {
+                ""
+            }
+        );
+
+        let map_row = |row: &rusqlite::Row<'_>| {
+            Ok(ListenVideo {
+                video_id: row.get(0)?,
+                video_title: row.get(1)?,
+                video_url: row.get(2)?,
+                release_id: row.get(3)?,
+                release_title: row.get(4)?,
+                release_artist: row.get(5)?,
+                release_year: row.get(6)?,
+                release_genre: row.get(7)?,
+                release_style: row.get(8)?,
+                release_rating: row.get(9)?,
+                release_owners: row.get(10)?,
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = if let Some(s) = style_filter {
+            stmt.query_map(params![limit as i64, s], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(params![limit as i64], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
         Ok(rows)
     }
 

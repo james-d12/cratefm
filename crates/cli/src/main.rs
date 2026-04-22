@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
 
 fn cmd_listen(batch_size: usize) -> Result<()> {
     let db = Db::open(DB_PATH)?;
-    let videos = db.next_listen_videos(batch_size)?;
+    let videos = db.next_listen_videos(batch_size, None)?;
 
     if videos.is_empty() {
         println!("No unrated videos in the queue.");

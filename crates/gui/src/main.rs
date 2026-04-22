@@ -97,6 +97,7 @@ struct App {
 
     // Listen session
     listen_batch: String,
+    listen_style: String,
     listen_phase: ListenPhase,
     listen_queue: Vec<ListenVideo>, // upcoming, not including current
     listen_total: usize,            // size of original batch
@@ -144,6 +145,7 @@ enum Message {
 
     // Listen session
     ListenBatchInput(String),
+    ListenStyleInput(String),
     ListenStart,
     ListenBatchLoaded(Result<Vec<ListenVideo>, String>),
     ListenDownloadDone(Result<PathBuf, String>),
@@ -174,6 +176,7 @@ impl App {
             vid_rows: vec![],
             vid_error: None,
             listen_batch: "10".into(),
+            listen_style: String::new(),
             listen_phase: ListenPhase::Idle,
             listen_queue: vec![],
             listen_total: 0,
@@ -271,16 +274,19 @@ impl App {
 
             // ── Listen session ────────────────────────────────────────────
             Message::ListenBatchInput(v) => { self.listen_batch = v; Task::none() }
+            Message::ListenStyleInput(v) => { self.listen_style = v; Task::none() }
 
             Message::ListenStart => {
                 self.listen_phase = ListenPhase::Loading;
                 self.listen_stats = ListenStats::default();
                 self.listen_error = None;
                 let batch: usize = self.listen_batch.parse().unwrap_or(10);
+                let style = self.listen_style.trim().to_owned();
+                let style_opt = if style.is_empty() { None } else { Some(style) };
                 Task::perform(
                     async move {
                         let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-                        db.next_listen_videos(batch).map_err(|e| e.to_string())
+                        db.next_listen_videos(batch, style_opt.as_deref()).map_err(|e| e.to_string())
                     },
                     Message::ListenBatchLoaded,
                 )
@@ -634,12 +640,20 @@ impl App {
                     text_input("10", &self.listen_batch)
                         .on_input(Message::ListenBatchInput)
                         .width(70),
-                    button("Start session")
-                        .on_press(Message::ListenStart)
-                        .padding([8, 20]),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
+                row![
+                    text("Style filter:"),
+                    text_input("All styles", &self.listen_style)
+                        .on_input(Message::ListenStyleInput)
+                        .width(200),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                button("Start session")
+                    .on_press(Message::ListenStart)
+                    .padding([8, 20]),
                 error_line,
             ]
             .spacing(16)

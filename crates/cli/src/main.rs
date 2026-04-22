@@ -32,8 +32,7 @@ enum Command {
         limit: usize,
         #[arg(long, default_value_t = 10)]
         min_owners: u64,
-        #[arg(long, default_value_t = 500)]
-        max_owners: u64,
+        max_owners: Option<u64>,
         #[arg(long)]
         min_rating: Option<f64>,
     },
@@ -90,15 +89,18 @@ async fn main() -> Result<()> {
             };
             let db = Db::open(DB_PATH)?;
             let known_ids = db.known_ids()?;
+            let start_page = db.get_cursor(&params.genre, &params.style, params.year)?;
             println!(
-                "Searching for {} / {} releases from {}...",
+                "Searching for {} / {} releases from {} (starting page {start_page})...",
                 params.genre, params.style, params.year
             );
-            let (releases, videos) = fetch_releases(&params, &known_ids).await?;
+            let (releases, videos, next_page) =
+                fetch_releases(&params, &known_ids, start_page).await?;
             db.save_releases(&releases)?;
             db.save_videos(&videos)?;
+            db.set_cursor(&params.genre, &params.style, params.year, next_page)?;
             println!(
-                "\nDone. {} releases, {} videos added.",
+                "\nDone. {} releases, {} videos added. Cursor saved at page {next_page}.",
                 releases.len(),
                 videos.len()
             );

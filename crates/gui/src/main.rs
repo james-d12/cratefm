@@ -165,12 +165,12 @@ impl App {
             page: Page::Releases,
             f_token: String::new(),
             f_genre: "Electronic".into(),
-            f_style: String::new(),
-            f_year: "2020".into(),
+            f_style: "Jungle".into(),
+            f_year: "1995".into(),
             f_limit: "10".into(),
             f_min_owners: "10".into(),
-            f_max_owners: "500".into(),
-            f_min_rating: String::new(),
+            f_max_owners: String::new(),
+            f_min_rating: "4.0".into(),
             fetch_state: FetchState::Idle,
             rel_status: ReleaseStatus::ToListen,
             rel_search: String::new(),
@@ -236,7 +236,7 @@ impl App {
                     year: self.f_year.parse().unwrap_or(2020),
                     limit: self.f_limit.parse().unwrap_or(10),
                     min_owners: self.f_min_owners.parse().unwrap_or(10),
-                    max_owners: self.f_max_owners.parse().unwrap_or(500),
+                    max_owners: self.f_max_owners.parse().ok(),
                     min_rating: self.f_min_rating.parse().ok(),
                 };
                 self.fetch_state = FetchState::Running;
@@ -798,18 +798,18 @@ impl App {
 // ─── Async tasks ─────────────────────────────────────────────────────────────
 
 async fn do_fetch(params: FetchParams) -> Result<(usize, usize), String> {
-    let known_ids = {
-        let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-        db.known_ids().map_err(|e| e.to_string())?
-    };
-    let (releases, videos) = fetch_releases(&params, &known_ids)
+    let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
+    let known_ids = db.known_ids().map_err(|e| e.to_string())?;
+    let start_page = db
+        .get_cursor(&params.genre, &params.style, params.year)
+        .map_err(|e| e.to_string())?;
+    let (releases, videos, next_page) = fetch_releases(&params, &known_ids, start_page)
         .await
         .map_err(|e| e.to_string())?;
-    {
-        let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-        db.save_releases(&releases).map_err(|e| e.to_string())?;
-        db.save_videos(&videos).map_err(|e| e.to_string())?;
-    }
+    db.save_releases(&releases).map_err(|e| e.to_string())?;
+    db.save_videos(&videos).map_err(|e| e.to_string())?;
+    db.set_cursor(&params.genre, &params.style, params.year, next_page)
+        .map_err(|e| e.to_string())?;
     Ok((releases.len(), videos.len()))
 }
 

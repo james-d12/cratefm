@@ -105,6 +105,6 @@ pub struct FetchParams {
     pub year: u32,
     pub limit: usize,
     pub min_owners: u64,
-    pub max_owners: u64,
+    pub max_owners: Option<u64>,
     pub min_rating: Option<f64>,
 }

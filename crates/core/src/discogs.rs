@@ -106,19 +106,29 @@ struct VideoDetail {
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
 
 /// Searches the Discogs API and returns releases + videos that pass all filters.
+///
+/// `start_page` is loaded from the DB cursor so repeated fetches don't re-scan
+/// already-seen pages. Returns the next page to resume from so the caller can
+/// persist it back to the DB.
+///
 /// The returned release slice is shuffled randomly before returning.
 pub async fn fetch_releases(
     params: &FetchParams,
     known_ids: &std::collections::HashSet<String>,
-) -> Result<(Vec<PendingRelease>, Vec<PendingVideo>)> {
+    start_page: u32,
+) -> Result<(Vec<PendingRelease>, Vec<PendingVideo>, u32)> {
     let client = Client::builder()
         .user_agent("CrateFM/0.1")
         .build()?;
 
     let mut pending_releases: Vec<PendingRelease> = Vec::new();
     let mut pending_videos: Vec<PendingVideo> = Vec::new();
-    let mut page = 1u32;
-    let mut search_idx = 0usize;
+    let mut page = start_page.max(1);
+    // Absolute index for log messages, accounting for skipped pages.
+    let mut search_idx = ((page - 1) * 50) as usize;
+    // Where to resume on the next fetch.
+    // Default is 1 (wrap around); overridden to `page` if we stop mid-page due to limit.
+    let mut next_page = 1u32;
 
     'outer: loop {
         let resp = client
@@ -145,9 +155,19 @@ pub async fn fetch_releases(
 
         let total_pages = resp.pagination.pages;
 
+        // Guard against a stale cursor pointing past the end of the catalog.
+        if page > total_pages {
+            next_page = 1;
+            break;
+        }
+
         for result in resp.results {
+            println!("Pending Releases to check: {:?} | limit: {:?}", pending_releases.len(), params.limit);
+            
             if pending_releases.len() >= params.limit {
                 println!("Reached max results ({}). Stopping.", params.limit);
+                // Re-examine this page next run — we stopped mid-page.
+                next_page = page;
                 break 'outer;
             }
 
@@ -160,13 +180,20 @@ pub async fn fetch_releases(
             }
 
             let owners = result.community.have;
-            println!("[{search_idx}] Checking release {discogs_id}");
-            println!("  Owners: {owners}");
+            println!("[{search_idx}] Checking release {discogs_id}  owners={owners}");
 
-            if !(params.min_owners as i64 <= owners && owners <= params.max_owners as i64) {
-                println!("  Skipping (owners out of range).");
+            if owners < params.min_owners as i64 {
+                println!("  Skipping (owners {owners} below min {}).", params.min_owners);
                 sleep(Duration::from_secs(1)).await;
                 continue;
+            }
+
+            if let Some(max) = params.max_owners {
+                if owners > max as i64 {
+                    println!("  Skipping (owners above max).");
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
             }
 
             let is_compilation = result
@@ -255,9 +282,11 @@ pub async fn fetch_releases(
             sleep(Duration::from_secs(1)).await;
         }
 
-        if page >= total_pages || pending_releases.len() >= params.limit {
+        if page >= total_pages {
+            // next_page stays 1 (wrap around)
             break;
         }
+
         page += 1;
     }
 
@@ -265,5 +294,5 @@ pub async fn fetch_releases(
     let mut rng = rand::rng();
     pending_releases.shuffle(&mut rng);
 
-    Ok((pending_releases, pending_videos))
+    Ok((pending_releases, pending_videos, next_page))
 }

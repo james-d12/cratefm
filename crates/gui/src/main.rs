@@ -5,7 +5,6 @@ use crate::pages::listen::ListenPage;
 use crate::pages::releases::ReleasesPage;
 use crate::pages::videos::VideosPage;
 use crate::pages::{fetch, listen, releases, videos};
-use cratefm_core::models::ReleaseStatus;
 use iced::{
     Alignment, Element, Length, Task, Theme,
     widget::{Space, button, column, horizontal_rule, row, text},
@@ -62,14 +61,13 @@ enum Message {
 impl App {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
-            page: Page::Releases,
+            page: Page::Fetch,
             listen_page: ListenPage::new(),
             fetch_page: FetchPage::new(),
             videos_page: VideosPage::new(),
             releases_page: ReleasesPage::new(),
         };
-        let task = releases::load_releases(ReleaseStatus::ToListen).map(Message::Releases);
-        (app, task)
+        (app, Task::none())
     }
 
     fn theme(&self) -> Theme {
@@ -85,11 +83,11 @@ impl App {
             }
             Message::GoReleases => {
                 self.page = Page::Releases;
-                Task::none()
+                self.releases_page.load().map(Message::Releases)
             }
             Message::GoVideos => {
                 self.page = Page::Videos;
-                Task::none()
+                self.videos_page.load().map(Message::Videos)
             }
             Message::GoListen => {
                 self.page = Page::Listen;

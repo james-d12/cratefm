@@ -28,6 +28,10 @@ impl VideosPage {
         }
     }
 
+    pub fn load(&self) -> Task<Message> {
+        load_videos()
+    }
+
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::VidSearch(v) => {

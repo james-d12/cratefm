@@ -30,6 +30,10 @@ impl ReleasesPage {
         }
     }
 
+    pub fn load(&self) -> Task<Message> {
+        load_releases(self.rel_status.clone())
+    }
+
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::RelStatusChanged(status) => {
@@ -156,7 +160,7 @@ impl ReleasesPage {
     }
 }
 
-pub fn load_releases(status: ReleaseStatus) -> Task<Message> {
+fn load_releases(status: ReleaseStatus) -> Task<Message> {
     Task::perform(
         async move {
             let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;

@@ -29,7 +29,7 @@ enum ListenPhase {
 }
 
 #[derive(Debug, Clone)]
-enum RateAction {
+pub enum RateAction {
     Like,
     Dislike,
     Skip,

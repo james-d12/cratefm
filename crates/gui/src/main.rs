@@ -2,10 +2,11 @@ mod pages;
 
 use crate::pages::fetch::FetchPage;
 use crate::pages::listen::ListenPage;
-use crate::pages::{fetch, listen};
+use crate::pages::videos::VideosPage;
+use crate::pages::{fetch, listen, videos};
 use cratefm_core::{
     db::Db,
-    models::{ReleaseRow, ReleaseStatus, VideoRow},
+    models::{ReleaseRow, ReleaseStatus},
 };
 use iced::{
     Alignment, Element, Length, Task, Theme,
@@ -33,18 +34,6 @@ enum Page {
     Listen,
 }
 
-// ─── Listen state machine ─────────────────────────────────────────────────────
-
-// ─── Fetch state ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-enum FetchState {
-    Idle,
-    Running,
-    Done { releases: usize, videos: usize },
-    Error(String),
-}
-
 // ─── App state ────────────────────────────────────────────────────────────────
 
 struct App {
@@ -52,17 +41,13 @@ struct App {
 
     listen_page: ListenPage,
     fetch_page: FetchPage,
+    videos_page: VideosPage,
 
     // Releases view
     rel_status: ReleaseStatus,
     rel_search: String,
     rel_rows: Vec<ReleaseRow>,
     rel_error: Option<String>,
-
-    // Videos view
-    vid_search: String,
-    vid_rows: Vec<VideoRow>,
-    vid_error: Option<String>,
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
@@ -81,14 +66,10 @@ enum Message {
     RelRefresh,
     RelLoaded(Result<Vec<ReleaseRow>, String>),
 
-    // Videos view
-    VidSearch(String),
-    VidRefresh,
-    VidLoaded(Result<Vec<VideoRow>, String>),
-
     // Listen
     Listen(listen::Message),
     Fetch(fetch::Message),
+    Videos(videos::Message),
 }
 
 // ─── App impl ────────────────────────────────────────────────────────────────
@@ -101,11 +82,9 @@ impl App {
             rel_search: String::new(),
             rel_rows: vec![],
             rel_error: None,
-            vid_search: String::new(),
-            vid_rows: vec![],
-            vid_error: None,
             listen_page: ListenPage::new(),
             fetch_page: FetchPage::new(),
+            videos_page: VideosPage::new(),
         };
         let task = load_releases(ReleaseStatus::ToListen);
         (app, task)
@@ -128,7 +107,7 @@ impl App {
             }
             Message::GoVideos => {
                 self.page = Page::Videos;
-                load_videos()
+                Task::none()
             }
             Message::GoListen => {
                 self.page = Page::Listen;
@@ -156,24 +135,9 @@ impl App {
                 Task::none()
             }
 
-            // ── Videos view ───────────────────────────────────────────────
-            Message::VidSearch(v) => {
-                self.vid_search = v;
-                Task::none()
-            }
-            Message::VidRefresh => load_videos(),
-            Message::VidLoaded(result) => {
-                match result {
-                    Ok(rows) => {
-                        self.vid_rows = rows;
-                        self.vid_error = None;
-                    }
-                    Err(e) => self.vid_error = Some(e),
-                }
-                Task::none()
-            }
             Message::Listen(msg) => self.listen_page.update(msg).map(Message::Listen),
             Message::Fetch(msg) => self.fetch_page.update(msg).map(Message::Fetch),
+            Message::Videos(msg) => self.videos_page.update(msg).map(Message::Videos),
         }
     }
 
@@ -194,7 +158,7 @@ impl App {
         let body = match &self.page {
             Page::Fetch => self.fetch_page.view_fetch().map(Message::Fetch),
             Page::Releases => self.view_releases(),
-            Page::Videos => self.view_videos(),
+            Page::Videos => self.videos_page.view_videos().map(Message::Videos),
             Page::Listen => self.listen_page.view_listen().map(Message::Listen),
         };
 
@@ -305,86 +269,6 @@ impl App {
             .height(Length::Fill)
             .into()
     }
-
-    // ── Videos page ───────────────────────────────────────────────────────────
-
-    fn view_videos(&self) -> Element<'_, Message> {
-        let filters = row![
-            text_input("Search artist / title / URL…", &self.vid_search)
-                .on_input(Message::VidSearch)
-                .width(380),
-            Space::with_width(Length::Fill),
-            button("Refresh").on_press(Message::VidRefresh),
-        ]
-        .spacing(8)
-        .padding([8, 16])
-        .align_y(Alignment::Center);
-
-        let content: Element<Message> = if let Some(err) = &self.vid_error {
-            container(text(format!("Error: {err}"))).padding(16).into()
-        } else {
-            let search = self.vid_search.to_lowercase();
-            let visible: Vec<_> = self
-                .vid_rows
-                .iter()
-                .filter(|vr| {
-                    search.is_empty()
-                        || vr.video.title.to_lowercase().contains(&search)
-                        || vr.video.url.to_lowercase().contains(&search)
-                        || vr.release_artist.to_lowercase().contains(&search)
-                        || vr.release_title.to_lowercase().contains(&search)
-                })
-                .collect();
-
-            let header = table_row(vec![
-                (50, "ID"),
-                (80, "Status"),
-                (150, "Artist"),
-                (180, "Release"),
-                (200, "Video title"),
-                (300, "URL"),
-            ]);
-
-            let rows: Vec<Element<Message>> = visible
-                .iter()
-                .map(|vr| {
-                    table_row(vec![
-                        (50, vr.video.id.to_string()),
-                        (80, vr.video.status.to_string()),
-                        (150, vr.release_artist.clone()),
-                        (180, vr.release_title.clone()),
-                        (200, vr.video.title.clone()),
-                        (300, vr.video.url.clone()),
-                    ])
-                })
-                .collect();
-
-            scrollable(
-                column(
-                    std::iter::once(header)
-                        .chain(std::iter::once(horizontal_rule(1).into()))
-                        .chain(rows)
-                        .chain(std::iter::once(
-                            text(format!("{} video(s)", visible.len())).into(),
-                        ))
-                        .collect::<Vec<_>>(),
-                )
-                .spacing(2)
-                .padding(iced::Padding {
-                    top: 0.0,
-                    right: 16.0,
-                    bottom: 16.0,
-                    left: 16.0,
-                }),
-            )
-            .height(Length::Fill)
-            .into()
-        };
-
-        column![filters, horizontal_rule(1), content]
-            .height(Length::Fill)
-            .into()
-    }
 }
 
 // ─── Async tasks ─────────────────────────────────────────────────────────────
@@ -395,16 +279,6 @@ fn load_releases(status: ReleaseStatus) -> Task<Message> {
             db.list_releases(Some(&status)).map_err(|e| e.to_string())
         },
         Message::RelLoaded,
-    )
-}
-
-fn load_videos() -> Task<Message> {
-    Task::perform(
-        async move {
-            let db = Db::open(DB_PATH).map_err(|e| e.to_string())?;
-            db.list_all_videos().map_err(|e| e.to_string())
-        },
-        Message::VidLoaded,
     )
 }
 

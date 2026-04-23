@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use cratefm_core::discogs::fetch::fetch_releases;
 use cratefm_core::{
     db::Db,
-    discos::fetch_releases,
     models::{FetchParams, ListenVideo, ReleaseStatus},
 };
 use std::io::{self, Write as IoWrite};
@@ -98,7 +98,12 @@ async fn main() -> Result<()> {
             db.save_releases(&releases.releases)?;
             db.save_videos(&releases.videos)?;
             db.save_images(&releases.images)?;
-            db.set_cursor(&params.genre, &params.style, params.year, releases.next_page)?;
+            db.set_cursor(
+                &params.genre,
+                &params.style,
+                params.year,
+                releases.next_page,
+            )?;
             println!(
                 "\nDone. {} releases, {} videos added.",
                 releases.releases.len(),
@@ -120,7 +125,15 @@ async fn main() -> Result<()> {
             }
             println!(
                 "\n{:<5} {:<8} {:<8} {:<6} {:<8} {:<8} {:<8} {:<30} {}",
-                "ID", "Rating", "Owners", "Year", "ToListen", "Liked", "Disliked", "Artist", "Title"
+                "ID",
+                "Rating",
+                "Owners",
+                "Year",
+                "ToListen",
+                "Liked",
+                "Disliked",
+                "Artist",
+                "Title"
             );
             println!("{}", "-".repeat(120));
             for row in &rows {
@@ -133,9 +146,15 @@ async fn main() -> Result<()> {
                 };
                 println!(
                     "{:<5} {:<8.2} {:<8} {:<6} {:<8} {:<8} {:<8} {:<30} {}",
-                    r.id, r.rating, r.owners, year,
-                    row.to_listen_count, row.liked_count, row.disliked_count,
-                    artist, r.title
+                    r.id,
+                    r.rating,
+                    r.owners,
+                    year,
+                    row.to_listen_count,
+                    row.liked_count,
+                    row.disliked_count,
+                    artist,
+                    r.title
                 );
             }
             println!();
@@ -170,7 +189,9 @@ fn cmd_listen(batch_size: usize) -> Result<()> {
 
     let total = videos.len();
     println!("Starting listen session: {total} unrated videos queued.");
-    println!("Tip: close VLC to move to the next track, or answer [q]uit after any track to stop.\n");
+    println!(
+        "Tip: close VLC to move to the next track, or answer [q]uit after any track to stop.\n"
+    );
 
     let tmp_dir = std::env::temp_dir().join(format!("cratefm-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)?;
@@ -207,20 +228,20 @@ fn run_listen_session(db: &Db, videos: &[ListenVideo], tmp_dir: &std::path::Path
         let dl = std::process::Command::new("yt-dlp")
             .args([
                 "-x",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "0",
                 "--no-playlist",
-                "-o", output_template.to_str().unwrap(),
+                "-o",
+                output_template.to_str().unwrap(),
                 &lv.video_url,
             ])
             .output()?;
 
         if !dl.status.success() {
             let stderr = String::from_utf8_lossy(&dl.stderr);
-            println!(
-                "  Download failed — skipping.\n  {}",
-                stderr.trim()
-            );
+            println!("  Download failed — skipping.\n  {}", stderr.trim());
             db.delete_video_by_url(&lv.video_url)?;
             skipped += 1;
             continue;

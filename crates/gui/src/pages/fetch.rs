@@ -1,6 +1,6 @@
 use crate::DB_PATH;
 use cratefm_core::db::Db;
-use cratefm_core::discos::fetch_releases;
+use cratefm_core::discogs::fetch::fetch_releases;
 use cratefm_core::models::FetchParams;
 use iced::widget::{Column, button, container, row, text, text_input};
 use iced::{Alignment, Element, Task};
@@ -215,11 +215,19 @@ async fn do_fetch(params: FetchParams) -> Result<(usize, usize), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    db.save_releases(&releases.releases).map_err(|e| e.to_string())?;
-    db.save_videos(&releases.videos).map_err(|e| e.to_string())?;
-    db.save_images(&releases.images).map_err(|e| e.to_string())?;
-    db.set_cursor(&params.genre, &params.style, params.year, releases.next_page)
+    db.save_releases(&releases.releases)
         .map_err(|e| e.to_string())?;
+    db.save_videos(&releases.videos)
+        .map_err(|e| e.to_string())?;
+    db.save_images(&releases.images)
+        .map_err(|e| e.to_string())?;
+    db.set_cursor(
+        &params.genre,
+        &params.style,
+        params.year,
+        releases.next_page,
+    )
+    .map_err(|e| e.to_string())?;
     Ok((releases.releases.len(), releases.videos.len()))
 }
 

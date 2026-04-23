@@ -1,6 +1,6 @@
 use crate::DB_PATH;
 use cratefm_core::db::Db;
-use cratefm_core::discogs::fetch_releases;
+use cratefm_core::discos::fetch_releases;
 use cratefm_core::models::FetchParams;
 use iced::widget::{Column, button, container, row, text, text_input};
 use iced::{Alignment, Element, Task};

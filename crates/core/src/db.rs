@@ -229,7 +229,7 @@ impl Db {
 
     // ── Write helpers ─────────────────────────────────────────────────────────
 
-    pub fn save_releases(&self, records: &[crate::discogs::PendingRelease]) -> Result<()> {
+    pub fn save_releases(&self, records: &[crate::discos::PendingRelease]) -> Result<()> {
         let now = chrono::Utc::now().naive_utc().to_string();
         let mut stmt = self.conn.prepare(
             "INSERT OR IGNORE INTO releases
@@ -253,7 +253,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn save_videos(&self, records: &[crate::discogs::PendingVideo]) -> Result<()> {
+    pub fn save_videos(&self, records: &[crate::discos::PendingVideo]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -287,7 +287,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn save_images(&self, records: &[crate::discogs::PendingImage]) -> Result<()> {
+    pub fn save_images(&self, records: &[crate::discos::PendingImage]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }

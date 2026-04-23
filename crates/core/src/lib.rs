@@ -1,3 +1,3 @@
 pub mod db;
-pub mod discogs;
+pub mod discos;
 pub mod models;

@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cratefm_core::{
     db::Db,
-    discogs::fetch_releases,
+    discos::fetch_releases,
     models::{FetchParams, ListenVideo, ReleaseStatus},
 };
 use std::io::{self, Write as IoWrite};

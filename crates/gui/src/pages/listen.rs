@@ -1,10 +1,13 @@
 use crate::DB_PATH;
-use cratefm_core::database::Db;
+use cratefm_core::database::releases::ReleaseStatus;
 use cratefm_core::database::videos::ListenVideo;
+use cratefm_core::database::Db;
 use iced::widget::{button, container, horizontal_rule, row, text, text_input};
 use iced::{Alignment, Element, Task};
+use rodio::{Decoder, OutputStream, Sink};
+use std::io::BufReader;
 use std::path::PathBuf;
-use cratefm_core::database::releases::ReleaseStatus;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -15,7 +18,9 @@ pub enum Message {
     ListenStart,
     ListenBatchLoaded(Result<Vec<ListenVideo>, String>),
     ListenDownloadDone(Result<PathBuf, String>),
-    ListenPlaybackDone(u64), // carries generation id
+    ListenPlaybackDone(u64),
+    ListenPlayPause,
+    ListenStop,
     ListenRate(RateAction),
 }
 
@@ -24,8 +29,8 @@ enum ListenPhase {
     Idle,
     Loading,
     Downloading,
-    Playing,       // VLC running — buttons enabled
-    WaitingRating, // VLC closed — waiting for user action
+    Playing,
+    WaitingRating,
     Done,
 }
 
@@ -44,20 +49,24 @@ struct ListenStats {
     skipped: usize,
 }
 
+struct PlaybackHandle {
+    sink: Arc<Sink>,
+    _stream: OutputStream,
+}
+
 pub struct ListenPage {
-    // Listen session
     listen_batch: String,
     listen_style: String,
     listen_phase: ListenPhase,
-    listen_queue: Vec<ListenVideo>, // upcoming, not including current
-    listen_total: usize,            // size of original batch
+    listen_queue: Vec<ListenVideo>,
+    listen_total: usize,
     listen_current: Option<ListenVideo>,
     listen_filepath: Option<PathBuf>,
     listen_stats: ListenStats,
     listen_error: Option<String>,
-    /// Incremented each time we start a new download/play cycle so stale
-    /// PlaybackDone messages from a previous VLC process are ignored.
     listen_gen: u64,
+    listen_paused: bool,
+    listen_handle: Option<PlaybackHandle>,
 }
 
 impl ListenPage {
@@ -73,6 +82,8 @@ impl ListenPage {
             listen_stats: ListenStats::default(),
             listen_error: None,
             listen_gen: 0,
+            listen_paused: false,
+            listen_handle: None,
         }
     }
 
@@ -87,6 +98,7 @@ impl ListenPage {
                 Task::none()
             }
             Message::ListenReset => {
+                self.stop_playback();
                 self.listen_phase = ListenPhase::Idle;
                 self.listen_current = None;
                 self.listen_queue = vec![];
@@ -134,24 +146,39 @@ impl ListenPage {
                 }
                 Ok(filepath) => {
                     self.listen_filepath = Some(filepath.clone());
-                    self.listen_phase = ListenPhase::Playing;
-                    let play_gen = self.listen_gen;
-                    Task::perform(play_file(filepath), move |()| {
-                        Message::ListenPlaybackDone(play_gen)
-                    })
+                    self.start_playback(filepath)
                 }
             },
             Message::ListenPlaybackDone(play_gen) => {
-                // Ignore stale messages from previous VLC processes
                 if play_gen == self.listen_gen && self.listen_phase == ListenPhase::Playing {
+                    self.listen_handle = None;
+                    self.listen_paused = false;
                     self.listen_phase = ListenPhase::WaitingRating;
                 }
+                Task::none()
+            }
+            Message::ListenPlayPause => {
+                if let Some(handle) = &self.listen_handle {
+                    if self.listen_paused {
+                        handle.sink.play();
+                        self.listen_paused = false;
+                    } else {
+                        handle.sink.pause();
+                        self.listen_paused = true;
+                    }
+                }
+                Task::none()
+            }
+            Message::ListenStop => {
+                self.stop_playback();
+                self.listen_phase = ListenPhase::WaitingRating;
                 Task::none()
             }
             Message::ListenRate(action) => {
                 let video_id = self.listen_current.as_ref().map(|v| v.video_id);
 
-                // Clean up the downloaded file
+                self.stop_playback();
+
                 if let Some(path) = self.listen_filepath.take() {
                     let _ = std::fs::remove_file(&path);
                 }
@@ -189,11 +216,74 @@ impl ListenPage {
         }
     }
 
+    fn stop_playback(&mut self) {
+        if let Some(handle) = self.listen_handle.take() {
+            handle.sink.stop();
+        }
+        self.listen_paused = false;
+    }
+
     fn start_download(&mut self, video: ListenVideo) -> Task<Message> {
         self.listen_gen += 1;
         self.listen_current = Some(video.clone());
         self.listen_phase = ListenPhase::Downloading;
         Task::perform(download_video(video), Message::ListenDownloadDone)
+    }
+
+    fn start_playback(&mut self, filepath: PathBuf) -> Task<Message> {
+        let (stream, stream_handle) = match OutputStream::try_default() {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.listen_error = Some(format!("Audio output error: {e} — skipping"));
+                self.listen_stats.skipped += 1;
+                return self.advance_listen();
+            }
+        };
+
+        let sink = match Sink::try_new(&stream_handle) {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                self.listen_error = Some(format!("Audio sink error: {e} — skipping"));
+                self.listen_stats.skipped += 1;
+                return self.advance_listen();
+            }
+        };
+
+        let file = match std::fs::File::open(&filepath) {
+            Ok(f) => f,
+            Err(e) => {
+                self.listen_error = Some(format!("File open error: {e} — skipping"));
+                self.listen_stats.skipped += 1;
+                return self.advance_listen();
+            }
+        };
+
+        let decoder = match Decoder::new(BufReader::new(file)) {
+            Ok(d) => d,
+            Err(e) => {
+                self.listen_error = Some(format!("Audio decode error: {e} — skipping"));
+                self.listen_stats.skipped += 1;
+                return self.advance_listen();
+            }
+        };
+
+        sink.append(decoder);
+
+        let sink_clone = Arc::clone(&sink);
+        let play_gen = self.listen_gen;
+
+        self.listen_handle = Some(PlaybackHandle { sink, _stream: stream });
+        self.listen_phase = ListenPhase::Playing;
+        self.listen_paused = false;
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || sink_clone.sleep_until_end())
+                    .await
+                    .ok();
+            },
+            move |()| Message::ListenPlaybackDone(play_gen),
+        )
     }
 
     fn advance_listen(&mut self) -> Task<Message> {
@@ -224,7 +314,7 @@ impl ListenPage {
         container(
             iced::widget::column![
                 text("Listen Session").size(20),
-                text("Plays your to_listen queue using yt-dlp + VLC."),
+                text("Plays your to_listen queue using yt-dlp."),
                 row![
                     text("Batch size:"),
                     text_input("10", &self.listen_batch)
@@ -281,7 +371,6 @@ impl ListenPage {
         let position = self.listen_total - self.listen_queue.len();
         let progress = text(format!("Track {position} / {}", self.listen_total));
 
-        // Release + video card
         let year_str = video
             .release_year
             .map(|y| format!(" ({y})"))
@@ -314,34 +403,48 @@ impl ListenPage {
         ]
         .spacing(4);
 
-        let status_line = match &self.listen_phase {
-            ListenPhase::Downloading => text("Downloading with yt-dlp…"),
-            ListenPhase::Playing => text("Playing in VLC — close VLC or rate below"),
-            ListenPhase::WaitingRating => text("Done playing — rate this release:"),
-            _ => text(""),
-        };
-
-        // Buttons — enabled once VLC has started (Playing or WaitingRating)
-        let can_rate = matches!(
-            self.listen_phase,
-            ListenPhase::Playing | ListenPhase::WaitingRating
-        );
-        let rate_btn = |label: &'static str, action: RateAction| -> Element<'_, Message> {
-            let b = button(text(label)).padding([10, 20]);
-            if can_rate {
-                b.on_press(Message::ListenRate(action)).into()
-            } else {
-                b.into()
+        let controls: Element<Message> = match &self.listen_phase {
+            ListenPhase::Downloading => text("Downloading with yt-dlp…").into(),
+            ListenPhase::Playing => {
+                let pause_label = if self.listen_paused { "Resume" } else { "Pause" };
+                let status = if self.listen_paused { "Paused" } else { "Now playing" };
+                iced::widget::column![
+                    text(status),
+                    row![
+                        button(text(pause_label))
+                            .on_press(Message::ListenPlayPause)
+                            .padding([8, 20]),
+                        button(text("Stop"))
+                            .on_press(Message::ListenStop)
+                            .padding([8, 20]),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(8)
+                .into()
             }
+            ListenPhase::WaitingRating => iced::widget::column![
+                text("Done playing — rate this release:"),
+                row![
+                    button(text("Like"))
+                        .on_press(Message::ListenRate(RateAction::Like))
+                        .padding([8, 20]),
+                    button(text("Dislike"))
+                        .on_press(Message::ListenRate(RateAction::Dislike))
+                        .padding([8, 20]),
+                    button(text("Skip"))
+                        .on_press(Message::ListenRate(RateAction::Skip))
+                        .padding([8, 20]),
+                    button(text("Quit"))
+                        .on_press(Message::ListenRate(RateAction::Quit))
+                        .padding([8, 20]),
+                ]
+                .spacing(8),
+            ]
+            .spacing(8)
+            .into(),
+            _ => text("").into(),
         };
-
-        let buttons = row![
-            rate_btn("Like", RateAction::Like),
-            rate_btn("Dislike", RateAction::Dislike),
-            rate_btn("Skip", RateAction::Skip),
-            rate_btn("Quit", RateAction::Quit),
-        ]
-        .spacing(8);
 
         let error_line: Element<Message> = match &self.listen_error {
             Some(e) => text(format!("Note: {e}")).size(12).into(),
@@ -361,8 +464,7 @@ impl ListenPage {
                 horizontal_rule(1),
                 card,
                 horizontal_rule(1),
-                status_line,
-                buttons,
+                controls,
                 stats_line,
                 error_line,
             ]
@@ -374,7 +476,6 @@ impl ListenPage {
     }
 }
 
-/// Download a video using yt-dlp and return the file path.
 async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
     let video_url = video.video_url;
 
@@ -383,7 +484,6 @@ async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    // Clear any leftover files from a previous track
     if let Ok(mut entries) = tokio::fs::read_dir(&tmp_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let _ = tokio::fs::remove_file(entry.path()).await;
@@ -411,7 +511,6 @@ async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
         return Err("yt-dlp exited with an error".into());
     }
 
-    // Find the file that was just written
     let mut entries = tokio::fs::read_dir(&tmp_dir)
         .await
         .map_err(|e| e.to_string())?;
@@ -431,16 +530,4 @@ async fn download_video(video: ListenVideo) -> Result<PathBuf, String> {
 
     best.map(|(p, _)| p)
         .ok_or_else(|| "No file found after yt-dlp download".into())
-}
-
-/// Launch VLC and wait for it to exit. Returns unit regardless of VLC's exit code.
-async fn play_file(filepath: PathBuf) {
-    let _ = tokio::process::Command::new("vlc")
-        .args([
-            "--play-and-exit",
-            "--quiet",
-            filepath.to_str().unwrap_or(""),
-        ])
-        .status()
-        .await;
 }

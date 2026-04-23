@@ -11,3 +11,4 @@ path = "src/main.rs"
 cratefm-core = { workspace = true }
 iced = { workspace = true }
 tokio = { workspace = true }
+rodio = "0.17"

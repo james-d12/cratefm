@@ -41,7 +41,7 @@ pub async fn fetch_releases(
                     break;
                 }
 
-                for result in resp.results {
+                for result in resp.results.iter().filter(|r| r.style.iter().len() == 1) {
                     println!(
                         "Pending Releases to check: {:?} | limit: {:?}",
                         pending_releases.len(),
@@ -104,6 +104,14 @@ pub async fn fetch_releases(
                             sleep(Duration::from_secs(1)).await;
                             continue;
                         }
+                    }
+
+                    if detail.styles.len() > 1 {
+                        println!(
+                            "Release has more then one style, skipping for more accurate results."
+                        );
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
                     }
 
                     let artist_str = if detail.artists.is_empty() {

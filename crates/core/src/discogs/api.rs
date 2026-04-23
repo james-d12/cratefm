@@ -22,6 +22,7 @@ pub struct SearchResult {
     pub community: SearchCommunity,
     #[serde(default)]
     pub formats: Vec<Format>,
+    pub style: Vec<String>
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -43,6 +44,7 @@ pub struct ReleaseDetail {
     pub(crate) uri: String,
     #[serde(default)]
     pub(crate) artists: Vec<Artist>,
+    pub(crate) styles: Vec<String>,
     #[serde(default)]
     pub(crate) community: ReleaseCommunity,
     #[serde(default)]

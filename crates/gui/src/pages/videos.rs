@@ -85,8 +85,8 @@ impl VideosPage {
                 (80, "Status"),
                 (150, "Artist"),
                 (180, "Release"),
-                (200, "Video title"),
-                (300, "URL"),
+                (350, "Video title"),
+                (350, "URL"),
             ]);
 
             let rows: Vec<Element<Message>> = visible

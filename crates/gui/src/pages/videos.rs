@@ -1,10 +1,10 @@
 use crate::DB_PATH;
 use cratefm_core::database::Db;
-use cratefm_core::models::VideoRow;
 use iced::widget::{
     Space, button, column, container, horizontal_rule, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Length, Task};
+use cratefm_core::database::videos::VideoRow;
 
 #[derive(Debug, Clone)]
 pub enum Message {

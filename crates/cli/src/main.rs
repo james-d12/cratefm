@@ -1,12 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use cratefm_core::database::Db;
 use cratefm_core::discogs::fetch::fetch_releases;
-use cratefm_core::{
-    database::Db,
-    models::{ListenVideo, ReleaseStatus},
-};
-use std::io::{self, Write as IoWrite};
 use cratefm_core::discogs::models::FetchParams;
+use std::io::{self, Write as IoWrite};
+use cratefm_core::database::releases::ReleaseStatus;
+use cratefm_core::database::videos::ListenVideo;
 
 const DB_PATH: &str = "discogs.db";
 

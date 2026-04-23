@@ -1,8 +1,42 @@
 use crate::database::Db;
+use crate::database::releases::ReleaseStatus;
 use crate::discogs::models::PendingVideo;
-use crate::models::{ListenVideo, ReleaseStatus, Video, VideoRow};
 use anyhow::Result;
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
+
+/// A video with its own listen status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Video {
+    pub id: i64,
+    pub release_id: i64,
+    pub title: String,
+    pub url: String,
+    pub status: ReleaseStatus,
+}
+
+/// A video joined with its release info, used for the listen queue and video list.
+#[derive(Debug, Clone)]
+pub struct VideoRow {
+    pub video: Video,
+    pub release_title: String,
+    pub release_artist: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListenVideo {
+    pub video_id: i64,
+    pub video_title: String,
+    pub video_url: String,
+    pub release_id: i64,
+    pub release_title: String,
+    pub release_artist: String,
+    pub release_year: Option<i32>,
+    pub release_genre: String,
+    pub release_style: String,
+    pub release_rating: f64,
+    pub release_owners: i64,
+}
 
 impl Db {
     pub fn init_videos(&self) -> Result<()> {

@@ -1,8 +1,69 @@
 use crate::database::Db;
 use crate::discogs::models::PendingRelease;
-use crate::models::{Release, ReleaseRow, ReleaseStatus};
 use anyhow::Result;
+use chrono::NaiveDateTime;
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Release {
+    pub id: i64,
+    pub discogs_id: String,
+    pub title: String,
+    pub artist: String,
+    pub year: Option<i32>,
+    pub genre: String,
+    pub style: String,
+    pub rating: f64,
+    pub owners: i64,
+    pub url: String,
+    pub fetched_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReleaseRow {
+    pub release: Release,
+    pub to_listen_count: i64,
+    pub liked_count: i64,
+    pub disliked_count: i64,
+}
+
+impl ReleaseRow {
+    pub fn video_count(&self) -> i64 {
+        self.to_listen_count + self.liked_count + self.disliked_count
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseStatus {
+    ToListen,
+    Liked,
+    Disliked,
+}
+
+impl std::fmt::Display for ReleaseStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReleaseStatus::ToListen => write!(f, "to_listen"),
+            ReleaseStatus::Liked => write!(f, "liked"),
+            ReleaseStatus::Disliked => write!(f, "disliked"),
+        }
+    }
+}
+
+impl std::str::FromStr for ReleaseStatus {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "to_listen" => Ok(ReleaseStatus::ToListen),
+            "liked" => Ok(ReleaseStatus::Liked),
+            "disliked" => Ok(ReleaseStatus::Disliked),
+            other => Err(anyhow::anyhow!("unknown status: {other}")),
+        }
+    }
+}
 
 impl Db {
     pub fn init_releases(&self) -> Result<()> {

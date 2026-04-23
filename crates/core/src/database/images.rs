@@ -1,8 +1,25 @@
 use crate::database::Db;
 use crate::discogs::models::PendingImage;
-use crate::models::{Image, ImageRow};
 use anyhow::Result;
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub id: i64,
+    pub release_id: i64,
+    pub url: String,
+    pub image_type: String,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageRow {
+    pub image: Image,
+    pub release_title: String,
+    pub release_artist: String,
+}
 
 impl Db {
     pub fn init_images(&self) -> Result<()> {

@@ -1,9 +1,9 @@
 use rusqlite::Connection;
 
-mod cursors;
-mod images;
-mod releases;
-mod videos;
+pub mod cursors;
+pub mod images;
+pub mod releases;
+pub mod videos;
 
 pub struct Db {
     pub(crate) conn: Connection,

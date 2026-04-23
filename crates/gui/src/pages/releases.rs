@@ -1,10 +1,10 @@
 use crate::DB_PATH;
 use cratefm_core::database::Db;
-use cratefm_core::models::{ReleaseRow, ReleaseStatus};
 use iced::widget::{
     Space, button, column, container, horizontal_rule, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Length, Task};
+use cratefm_core::database::releases::{ReleaseRow, ReleaseStatus};
 
 #[derive(Debug, Clone)]
 pub enum Message {

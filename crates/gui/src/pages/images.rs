@@ -1,6 +1,6 @@
 use crate::DB_PATH;
 use cratefm_core::database::Db;
-use cratefm_core::models::ImageRow;
+use cratefm_core::database::images::ImageRow;
 use iced::widget::{
     Space, button, column, container, horizontal_rule, row, scrollable, text, text_input,
 };

@@ -11,6 +11,3 @@ path = "src/main.rs"
 cratefm-core = { workspace = true }
 iced = { workspace = true }
 tokio = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }

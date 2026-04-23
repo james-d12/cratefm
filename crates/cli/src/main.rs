@@ -3,9 +3,10 @@ use clap::{Parser, Subcommand};
 use cratefm_core::discogs::fetch::fetch_releases;
 use cratefm_core::{
     database::Db,
-    models::{FetchParams, ListenVideo, ReleaseStatus},
+    models::{ListenVideo, ReleaseStatus},
 };
 use std::io::{self, Write as IoWrite};
+use cratefm_core::discogs::models::FetchParams;
 
 const DB_PATH: &str = "discogs.db";
 

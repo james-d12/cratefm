@@ -1,7 +1,7 @@
 use crate::DB_PATH;
 use cratefm_core::database::Db;
 use cratefm_core::discogs::fetch::fetch_releases;
-use cratefm_core::models::FetchParams;
+use cratefm_core::discogs::models::FetchParams;
 use iced::widget::{Column, button, container, row, text, text_input};
 use iced::{Alignment, Element, Task};
 

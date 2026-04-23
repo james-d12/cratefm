@@ -1,6 +1,5 @@
 use crate::discogs::api::{DiscogsApi, ReleaseDetail};
-use crate::discogs::models::{PendingImage, PendingRelease, PendingVideo, Releases};
-use crate::models::FetchParams;
+use crate::discogs::models::{FetchParams, PendingImage, PendingRelease, PendingVideo, Releases};
 use anyhow::Result;
 use std::time::Duration;
 use tokio::time::sleep;

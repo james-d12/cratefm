@@ -1,4 +1,4 @@
-use crate::models::FetchParams;
+use crate::discogs::models::FetchParams;
 use reqwest::Client;
 use serde::Deserialize;
 

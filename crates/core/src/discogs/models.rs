@@ -34,3 +34,15 @@ pub struct Releases {
     pub images: Vec<PendingImage>,
     pub next_page: u32,
 }
+
+#[derive(Debug, Clone)]
+pub struct FetchParams {
+    pub token: String,
+    pub genre: String,
+    pub style: String,
+    pub year: u32,
+    pub limit: usize,
+    pub min_owners: u64,
+    pub max_owners: Option<u64>,
+    pub min_rating: Option<f64>,
+}

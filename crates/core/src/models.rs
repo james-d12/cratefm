@@ -112,16 +112,3 @@ pub struct ListenVideo {
     pub release_rating: f64,
     pub release_owners: i64,
 }
-
-/// Parameters for the `fetch` command.
-#[derive(Debug, Clone)]
-pub struct FetchParams {
-    pub token: String,
-    pub genre: String,
-    pub style: String,
-    pub year: u32,
-    pub limit: usize,
-    pub min_owners: u64,
-    pub max_owners: Option<u64>,
-    pub min_rating: Option<f64>,
-}

@@ -508,7 +508,7 @@ impl ListenPage {
             .release_year
             .map(|y| format!(" ({y})"))
             .unwrap_or_default();
-        let discogs_url = format!("https://www.discogs.com/release/{}", video.release_id);
+        let discogs_url = format!("https://www.discogs.com/release/{}", video.release_discogs_id);
         let youtube_url = video.video_url.clone();
         let card = iced::widget::column![
             text(format!("{}{}", video.release_title, year_str)).size(22),

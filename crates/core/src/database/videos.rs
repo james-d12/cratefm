@@ -28,7 +28,7 @@ pub struct ListenVideo {
     pub video_id: i64,
     pub video_title: String,
     pub video_url: String,
-    pub release_id: i64,
+    pub release_discogs_id: String,
     pub release_title: String,
     pub release_artist: String,
     pub release_year: Option<i32>,
@@ -93,7 +93,7 @@ impl Db {
 
         let sql = format!(
             "SELECT v.id, v.title, v.url,
-                    r.id, r.title, r.artist, r.year,
+                    r.discogs_id, r.title, r.artist, r.year,
                     r.genre, r.style, r.rating, r.owners
              FROM videos v
              JOIN releases r ON r.id = v.release_id
@@ -112,7 +112,7 @@ impl Db {
                 video_id: row.get(0)?,
                 video_title: row.get(1)?,
                 video_url: row.get(2)?,
-                release_id: row.get(3)?,
+                release_discogs_id: row.get(3)?,
                 release_title: row.get(4)?,
                 release_artist: row.get(5)?,
                 release_year: row.get(6)?,

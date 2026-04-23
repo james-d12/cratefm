@@ -123,6 +123,7 @@ impl ReleasesPage {
                         (55, r.year.map(|y| y.to_string()).unwrap_or_default()),
                         (120, r.genre.clone()),
                         (120, r.style.clone()),
+                        (250, r.url.clone()),
                         (65, format!("{:.2}", r.rating)),
                         (70, r.owners.to_string()),
                         (65, rr.to_listen_count.to_string()),

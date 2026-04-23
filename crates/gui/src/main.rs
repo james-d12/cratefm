@@ -16,6 +16,7 @@ const DB_PATH: &str = "discogs.db";
 fn main() -> iced::Result {
     iced::application("CrateFM", App::update, App::view)
         .theme(App::theme)
+        .subscription(App::subscription)
         .run_with(App::new)
 }
 
@@ -78,6 +79,15 @@ impl App {
 
     fn theme(&self) -> Theme {
         Theme::Dark
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if self.listen_page.is_playing() {
+            iced::time::every(std::time::Duration::from_millis(500))
+                .map(|_| Message::Listen(listen::Message::ListenTick))
+        } else {
+            iced::Subscription::none()
+        }
     }
 
     fn update(&mut self, msg: Message) -> Task<Message> {

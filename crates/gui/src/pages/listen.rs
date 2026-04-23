@@ -76,6 +76,8 @@ pub struct ListenPage {
     listen_position: Duration,
     listen_duration: Option<Duration>,
     listen_volume: f32,
+    // Set on every seek; tick skips get_pos() until the audio thread stabilises.
+    listen_seek_at: Option<std::time::Instant>,
 }
 
 impl ListenPage {
@@ -96,6 +98,7 @@ impl ListenPage {
             listen_position: Duration::ZERO,
             listen_duration: None,
             listen_volume: 1.0,
+            listen_seek_at: None,
         }
     }
 
@@ -192,11 +195,20 @@ impl ListenPage {
             }
             Message::ListenSeek(secs) => {
                 let pos = Duration::from_secs_f64(secs);
+                self.listen_seek_at = Some(std::time::Instant::now());
+                let is_backward = pos < self.listen_position;
                 self.listen_position = pos;
-                if let Some(handle) = &self.listen_handle {
-                    let _ = handle.player.try_seek(pos);
+
+                if is_backward {
+                    // Symphonia's mp3 format reader is forward-only. Rebuild the
+                    // decoder from scratch and forward-seek to the target position.
+                    self.seek_by_rebuild(pos)
+                } else {
+                    if let Some(handle) = &self.listen_handle {
+                        let _ = handle.player.try_seek(pos);
+                    }
+                    Task::none()
                 }
-                Task::none()
             }
             Message::ListenVolumeUp => {
                 self.listen_volume = (self.listen_volume + 0.1).min(2.0);
@@ -213,8 +225,15 @@ impl ListenPage {
                 Task::none()
             }
             Message::ListenTick => {
-                if let Some(handle) = &self.listen_handle {
-                    self.listen_position = handle.player.get_pos();
+                let cooldown_active = self
+                    .listen_seek_at
+                    .map(|t| t.elapsed() < Duration::from_millis(1200))
+                    .unwrap_or(false);
+                if !cooldown_active {
+                    self.listen_seek_at = None;
+                    if let Some(handle) = &self.listen_handle {
+                        self.listen_position = handle.player.get_pos();
+                    }
                 }
                 Task::none()
             }
@@ -260,6 +279,73 @@ impl ListenPage {
         }
     }
 
+    fn seek_by_rebuild(&mut self, target: Duration) -> Task<Message> {
+        let filepath = match self.listen_filepath.clone() {
+            Some(p) => p,
+            None => return Task::none(),
+        };
+
+        // Increment gen so the old sleep_until_end task (which fires when we
+        // stop the player) is treated as stale and ignored.
+        self.listen_gen += 1;
+
+        if let Some(handle) = self.listen_handle.take() {
+            handle.player.stop();
+        }
+
+        // Preserve duration — it's the same file.
+        let duration = self.listen_duration;
+
+        let device_sink = match DeviceSinkBuilder::open_default_sink() {
+            Ok(s) => s,
+            Err(e) => {
+                self.listen_error = Some(format!("Audio error on seek: {e}"));
+                return Task::none();
+            }
+        };
+
+        let file = match std::fs::File::open(&filepath) {
+            Ok(f) => f,
+            Err(e) => {
+                self.listen_error = Some(format!("Seek error: {e}"));
+                return Task::none();
+            }
+        };
+
+        let decoder = match Decoder::new(BufReader::new(file)) {
+            Ok(d) => d,
+            Err(e) => {
+                self.listen_error = Some(format!("Seek error: {e}"));
+                return Task::none();
+            }
+        };
+
+        let player = Arc::new(Player::connect_new(device_sink.mixer()));
+        player.set_volume(self.listen_volume);
+        player.append(decoder);
+        // Forward seek from position 0 to target — always succeeds.
+        let _ = player.try_seek(target);
+
+        let player_wait = Arc::clone(&player);
+        let play_gen = self.listen_gen;
+
+        self.listen_handle = Some(PlaybackHandle {
+            player,
+            _device_sink: device_sink,
+        });
+        self.listen_duration = duration;
+        self.listen_position = target;
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || player_wait.sleep_until_end())
+                    .await
+                    .ok();
+            },
+            move |()| Message::ListenPlaybackDone(play_gen),
+        )
+    }
+
     fn stop_playback(&mut self) {
         if let Some(handle) = self.listen_handle.take() {
             handle.player.stop();
@@ -267,6 +353,7 @@ impl ListenPage {
         self.listen_paused = false;
         self.listen_position = Duration::ZERO;
         self.listen_duration = None;
+        self.listen_seek_at = None;
     }
 
     fn start_download(&mut self, video: ListenVideo) -> Task<Message> {

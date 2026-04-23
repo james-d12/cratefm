@@ -1,5 +1,5 @@
 use crate::DB_PATH;
-use cratefm_core::db::Db;
+use cratefm_core::database::Db;
 use cratefm_core::models::{ListenVideo, ReleaseStatus};
 use iced::widget::{button, container, horizontal_rule, row, text, text_input};
 use iced::{Alignment, Element, Task};
